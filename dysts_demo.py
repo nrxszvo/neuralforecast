@@ -3,42 +3,80 @@ from neuralforecast.core import NeuralForecast
 from neuralforecast.auto import AutoNHITS
 from ray import tune
 import matplotlib.pyplot as plt
-import pandas as pd
 import numpy as np
 import dysts_wrapper as dw
-import torch.nn.functional as F
 
-Y_df = dw.make(seqlen=3000)
 
-n_series = 10
+import argparse
+
+parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+parser.add_argument(
+    "--legacy",
+    action="store_true",
+    default=False,
+    help="original nixtla implementation",
+)
+parser.add_argument(
+    "--seqlen", default=3000, type=int, help="training data sequence length per series"
+)
+parser.add_argument(
+    "--n_series",
+    default=10,
+    type=int,
+    help="number of chaotic series to include in dataset",
+)
+parser.add_argument("--H", default=100, type=int, help="horizon")
+parser.add_argument("--alpha", default=5, type=int, help="input_size=alpha*H")
+parser.add_argument(
+    "--test_percent", default=0.2, type=float, help="percent for test and val"
+)
+parser.add_argument("--num_samples", default=1, type=int, help="cv training samples")
+parser.add_argument("--batch_size", default=256, type=int, help="training batch size")
+parser.add_argument(
+    "--max_steps", default=1000, type=int, help="number of training steps per model"
+)
+args = parser.parse_args()
+
+Y_df = dw.make(seqlen=args.seqlen)
+
+n_series = args.n_series
 all_series = Y_df.unique_id.unique()
 series = np.random.choice(all_series, n_series, replace=False)
 series = series.tolist()
+print("Selected series:", series)
+
 Y_df = Y_df[Y_df.unique_id.isin(series)]
 
 # For this excercise we are going to take 20% of the DataSet
 n_time = len(Y_df.ds.unique())
-val_size = int(0.2 * n_time)
-test_size = int(0.2 * n_time)
+val_size = int(args.test_percent * n_time)
+test_size = int(args.test_percent * n_time)
 
-H = 100
+H = args.H
 n_step = 3
-alpha = 5
+alpha = args.alpha
 L = alpha * H
 W = (alpha + 1) * H
 
+if args.legacy:
+    batch_size = n_series
+    windows_batch_size = args.batch_size
+else:
+    batch_size = args.batch_size
+    windows_batch_size = 0
+
 # Use your own config or AutoNHITS.default_config
 nhits_config = {
-    "step_size": tune.choice([3]),
+    "step_size": tune.choice([n_step]),
     # Initial Learning rate
     "learning_rate": tune.choice([1e-3]),
     # Number of SGD steps
-    "max_steps": tune.choice([1000]),
+    "max_steps": tune.choice([args.max_steps]),
     # input_size = multiplier * H
     "input_size": tune.choice([L * n_step]),
-    "batch_size": tune.choice([n_series]),
+    "batch_size": tune.choice([batch_size]),
     # Number of windows in batch
-    "windows_batch_size": tune.choice([256]),
+    "windows_batch_size": tune.choice([windows_batch_size]),
     # MaxPool's Kernelsize
     "n_pool_kernel_size": tune.choice([[2, 2, 2]]),
     # Interpolation expressivity ratios
@@ -51,14 +89,23 @@ nhits_config = {
     "mlp_units": tune.choice([[[512, 512], [512, 512], [512, 512]]]),
     # Type of multi-step interpolation
     "interpolation_mode": tune.choice(["linear"]),
-    # Compute validation every 100 epochs
-    "val_check_steps": tune.choice([100]),
+    # Compute validation every N epochs
+    "val_check_steps": tune.choice([1000]),
     "random_seed": tune.randint(1, 10),
+    "lowmem": tune.choice([args.legacy == False]),
 }
 
-models = [AutoNHITS(h=H * n_step, config=nhits_config, num_samples=1)]
+models = [
+    AutoNHITS(
+        h=H * n_step,
+        input_size=L * n_step,
+        step_size=n_step,
+        config=nhits_config,
+        num_samples=args.num_samples,
+    )
+]
 
-nf = NeuralForecast(models=models, freq=1)
+nf = NeuralForecast(models=models, freq=1, lowmem=args.legacy == False)
 
 Y_hat_df = nf.cross_validation(
     df=Y_df, val_size=val_size, test_size=test_size, n_windows=None, step_size=n_step
