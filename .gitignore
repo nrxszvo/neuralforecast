@@ -23,3 +23,6 @@ lightning_logs/
 data/
 
 examples/
+.*swp
+node_modules/
+yarn.lock
