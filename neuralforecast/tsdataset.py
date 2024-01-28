@@ -14,6 +14,8 @@ import torch
 import utilsforecast.processing as ufp
 from torch.utils.data import Dataset, DataLoader
 from utilsforecast.compat import DataFrame, pl_Series
+import uuid
+import os
 
 
 # %% ../nbs/tsdataset.ipynb 5
@@ -144,18 +146,29 @@ class LowMemTSDataset(Dataset):
             sample_condition = windows[:, self.input_size :, available_idx]
             sample_condition = torch.sum(sample_condition, axis=1)
             final_condition = (sample_condition > 0) & (available_condition > 0)
-        self.windows = windows[final_condition]
-        self.n_windows = len(self.windows)
+
         if final_condition.sum() == 0:
             raise Exception("No windows available for training")
+
+        windows = windows[final_condition]
+        self.n_windows = len(windows)
+
+        self.tmp = f"{uuid.uuid4().__str__()}.npy"
+        np.save(self.tmp, windows.numpy())
+        self.windows = np.load(self.tmp, mmap_mode="r")
+
+    def __del__(self):
+        try:
+            os.remove(self.tmp)
+        except:
+            pass
 
     def __getitem__(self, idx):
         if isinstance(idx, int):
             # Add static data if available
             static = None if self.static is None else self.static[idx, :]
-
             item = dict(
-                temporal=self.windows[idx],
+                temporal=torch.from_numpy(self.windows[idx]),
                 temporal_cols=self.temporal_cols,
                 static=static,
                 static_cols=self.static_cols,
