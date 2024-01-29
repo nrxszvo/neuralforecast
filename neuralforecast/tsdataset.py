@@ -14,8 +14,6 @@ import torch
 import utilsforecast.processing as ufp
 from torch.utils.data import Dataset, DataLoader
 from utilsforecast.compat import DataFrame, pl_Series
-import uuid
-import os
 
 
 # %% ../nbs/tsdataset.ipynb 5
@@ -93,14 +91,29 @@ class LowMemTSDataset(Dataset):
         sorted=False,
     ):
         super().__init__()
+        self.input_size = input_size
+        self.window_size = self.input_size + h
+        if max_size < self.window_size:
+            raise Exception(
+                "Time series is too short for training, consider setting a smaller input size or set start_padding_enabled=True"
+            )
+        self.indptr = indptr
+        self.max_size = max_size
+        self.min_size = min_size
+        self.step_size = step_size
+        self.y_idx = y_idx
+        self.n_groups = len(indptr) - 1
+        assert (self.max_size - self.window_size) % self.step_size == 0
+        self._wins_per_series = (self.max_size - self.window_size) // self.step_size + 1
+        self.n_windows = self.n_groups * self._wins_per_series
 
         self.temporal_cols = pd.Index(list(temporal_cols))
-        n_series = indptr.size - 1
         self.temporal = torch.zeros(
-            size=(n_series, len(self.temporal_cols), max_size), dtype=torch.float32
+            size=(self.n_groups, self.max_size, len(self.temporal_cols)),
+            dtype=torch.float32,
         )
-        for i in range(n_series):
-            self.temporal[i] = torch.from_numpy(temporal[indptr[i] : indptr[i + 1]]).T
+        for i in range(self.n_groups):
+            self.temporal[i] = torch.from_numpy(temporal[indptr[i] : indptr[i + 1]])
 
         if static is not None:
             self.static = torch.tensor(static, dtype=torch.float)
@@ -109,66 +122,44 @@ class LowMemTSDataset(Dataset):
             self.static = static
             self.static_cols = static_cols
 
-        self.indptr = indptr
-        self.n_groups = len(indptr) - 1
-        self.input_size = input_size
-        self.h = h
-        self.step_size = step_size
-        self.max_size = max_size
-        self.min_size = min_size
-        self.y_idx = y_idx
-
         # Upadated flag. To protect consistency, dataset can only be updated once
         self.updated = False
         self.sorted = sorted
-        self._create_windows()
 
-    def _create_windows(self):
-        window_size = self.input_size + self.h
+    def _create_window(self, idx):
+        """
+        n_windows = max_size - window_size + 1
+        idx in [0, n_groups * n_windows]
+        temporal.shape = [n_groups, 2, max_size]
+        """
+        s_idx = idx // self._wins_per_series
+        w_idx = self.step_size * (idx - (s_idx * self._wins_per_series))
+        window = self.temporal[s_idx, w_idx : w_idx + self.window_size]
 
-        if self.temporal.shape[-1] < window_size:
-            raise Exception(
-                "Time series is too short for training, consider setting a smaller input size or set start_padding_enabled=True"
-            )
-        windows = self.temporal.unfold(
-            dimension=-1, size=window_size, step=self.step_size
-        )
-
-        windows = windows.permute(0, 2, 3, 1).contiguous()
-        windows = windows.reshape(-1, window_size, len(self.temporal_cols))
-
+        """
         # Sample and Available conditions
         available_idx = self.temporal_cols.get_loc("available_mask")
-        available_condition = windows[:, : self.input_size, available_idx]
-        available_condition = torch.sum(available_condition, axis=1)
+        available_condition = window[: self.input_size, available_idx]
+        available_condition = torch.sum(available_condition)
         final_condition = available_condition > 0
-        if self.h > 0:
-            sample_condition = windows[:, self.input_size :, available_idx]
-            sample_condition = torch.sum(sample_condition, axis=1)
-            final_condition = (sample_condition > 0) & (available_condition > 0)
+        sample_condition = window[self.input_size :, available_idx]
+        sample_condition = torch.sum(sample_condition)
+        final_condition = (sample_condition > 0) & (available_condition > 0)
 
         if final_condition.sum() == 0:
             raise Exception("No windows available for training")
 
-        windows = windows[final_condition]
-        self.n_windows = len(windows)
+        window = window[final_condition]
+        """
 
-        self.tmp = f"{uuid.uuid4().__str__()}.npy"
-        np.save(self.tmp, windows.numpy())
-        self.windows = np.load(self.tmp, mmap_mode="r")
-
-    def __del__(self):
-        try:
-            os.remove(self.tmp)
-        except:
-            pass
+        return window
 
     def __getitem__(self, idx):
         if isinstance(idx, int):
             # Add static data if available
             static = None if self.static is None else self.static[idx, :]
             item = dict(
-                temporal=torch.from_numpy(self.windows[idx]),
+                temporal=self._create_window(idx),
                 temporal_cols=self.temporal_cols,
                 static=static,
                 static_cols=self.static_cols,

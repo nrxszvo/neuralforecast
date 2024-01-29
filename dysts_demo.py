@@ -19,10 +19,15 @@ cfgyml = get_config(args.cfg)
 
 Y_df = dw.make(seqlen=cfgyml.seqlen)
 
-n_series = cfgyml.n_series
-all_series = Y_df.unique_id.unique()
-series = np.random.choice(all_series, n_series, replace=False)
-series = series.tolist()
+if cfgyml.n_series > 0:
+    n_series = cfgyml.n_series
+    all_series = Y_df.unique_id.unique()
+    series = np.random.choice(all_series, n_series, replace=False)
+    series = series.tolist()
+else:
+    series = cfgyml.series
+    n_series = len(series)
+
 print(f"Selected series: {', '.join(series)}")
 
 Y_df = Y_df[Y_df.unique_id.isin(series)]
@@ -103,12 +108,18 @@ print("MSE: ", mse(y_hat, y_true))
 y_true = y_true.reshape(n_series, -1, H, step_size)
 y_hat = y_hat.reshape(n_series, -1, H, step_size)
 
-datafile = f"datafiles/series{n_series}-step{best_config['max_steps']}-{datestr}.npy"
-np.save(
-    datafile,
-    {"series": series, "config": best_config, "y_true": y_true, "y_hat": y_hat},
-    allow_pickle=True,
-)
+if cfgyml.savedata:
+    if cfgyml.dataname:
+        datafile = f"datafiles/{cfgyml.dataname}.npy"
+    else:
+        datafile = (
+            f"datafiles/series{n_series}-step{best_config['max_steps']}-{datestr}.npy"
+        )
+    np.save(
+        datafile,
+        {"series": series, "config": best_config, "y_true": y_true, "y_hat": y_hat},
+        allow_pickle=True,
+    )
 
 nwindow = y_true.shape[1]
 wrange = (0, nwindow - 1)
@@ -140,7 +151,9 @@ while True:
         # yhat[1:] = y_hat[series_idx, w_idx, :]
         yhat = y_hat[series_idx, w_idx, :]
 
-        fig = plt.figure(figsize=plt.figaspect(2.0))
+        print("MAE: ", mae(yhat, ytrue))
+
+        fig = plt.figure(figsize=plt.figaspect(4.0))
 
         ax = fig.add_subplot(2, 1, 1)
         ax.plot(xv, ytrue.reshape(-1), label="True")

@@ -28,3 +28,10 @@ def make(seqlen=100, pts_per_period=75, resample=True):
         df.to_csv(csvfn, index=False)
         print("done")
     return df
+
+
+if __name__ == "__main__":
+    import sys
+
+    seqlen = int(sys.argv[1])
+    make(seqlen)

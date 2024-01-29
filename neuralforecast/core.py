@@ -661,7 +661,6 @@ class NeuralForecast:
             if count_names[model_name] > 0:
                 model_name += str(count_names[model_name])
             cols += [model_name + n for n in model.loss.output_names]
-
         if self.lowmem:
             fcsts_df = ufp.cv_times(
                 times=self.ds,
@@ -694,7 +693,6 @@ class NeuralForecast:
             np.nan,
             dtype=np.float32,
         )
-
         for model in self.models:
             model.fit(
                 dataset=self.dataset,
