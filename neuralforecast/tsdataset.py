@@ -377,8 +377,8 @@ class TimeSeriesDataset(Dataset):
         series_sz = sizes[0]
 
         name2idx = {name: idx for name, idx in zip(uids, indptr[:-1])}
-        testvalseries = np.random.choice(
-            uids, n_series_val + n_series_test, replace=False
+        testvalseries = sorted(
+            np.random.choice(uids, n_series_val + n_series_test, replace=False)
         )
         val_series = testvalseries[:n_series_val]
         test_series = testvalseries[n_series_val:]
@@ -503,6 +503,7 @@ class TimeSeriesDataset(Dataset):
             )
 
         test_df = df[df.unique_id.isin(test_dataset.uids)]
+        test_df.sort_values(by=["unique_id", "ds"], ignore_index=True, inplace=True)
         test_ids = indices[indices.isin(test_dataset.uids)]
         return train_dataset, val_dataset, test_dataset, test_ids, dates, test_df
 

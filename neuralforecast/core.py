@@ -355,7 +355,7 @@ class NeuralForecast:
                 self.test_dataset,
                 self.uids,
                 self.last_dates,
-                self.fcsts_df,
+                self.test_df,
             ) = self._prepare_fit(
                 df=df,
                 static_df=static_df,
