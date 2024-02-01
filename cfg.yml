@@ -1,11 +1,9 @@
-savedata: True 
-dataname: "Lorenz-25x10000"
-lowmem: True
-dataset: 'Lorenz_25x10000_ic-0.02.csv'
+dataset: 'datasets/Lorenz_25x10000_ic-0.02.csv'
+n_series_val: 3
+n_series_test: 3
 H: 100
 alpha: 5
-test_percent: 0.1
-num_samples: 4 
+num_samples: 4
 batch_size: [512]
 max_steps: [10000]
 val_check_steps: [1000]

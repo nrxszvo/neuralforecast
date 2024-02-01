@@ -259,8 +259,8 @@ class NeuralForecast:
         id_col,
         time_col,
         target_col,
-        val_size=0,
-        test_size=0,
+        n_series_val,
+        n_series_test,
     ):
         # TODO: uids, last_dates and ds should be properties of the dataset class. See github issue.
         self.id_col = id_col
@@ -270,10 +270,9 @@ class NeuralForecast:
             dataset,
             val_dset,
             test_dset,
-            uids,
+            test_ids,
             last_dates,
-            ds,
-            orig_indptr,
+            fcsts_df,
         ) = TimeSeriesDataset.from_df(
             df=df,
             static_df=static_df,
@@ -281,8 +280,8 @@ class NeuralForecast:
             id_col=id_col,
             time_col=time_col,
             target_col=target_col,
-            val_size=val_size,
-            test_size=test_size,
+            n_series_val=n_series_val,
+            n_series_test=n_series_test,
             h=self.h,
             input_size=self.input_size,
             step_size=self.step_size,
@@ -292,7 +291,7 @@ class NeuralForecast:
             self._scalers_transform(dataset)
         else:
             self._scalers_fit_transform(dataset)
-        return dataset, val_dset, test_dset, uids, last_dates, ds, orig_indptr
+        return dataset, val_dset, test_dset, test_ids, last_dates, fcsts_df
 
     def fit(
         self,
@@ -356,8 +355,7 @@ class NeuralForecast:
                 self.test_dataset,
                 self.uids,
                 self.last_dates,
-                self.ds,
-                self.orig_indptr,
+                self.fcsts_df,
             ) = self._prepare_fit(
                 df=df,
                 static_df=static_df,
@@ -606,10 +604,9 @@ class NeuralForecast:
         self,
         df: Optional[DataFrame],
         static_df: Optional[DataFrame],
-        n_windows: int,
         step_size: int,
-        val_size: Optional[int],
-        test_size: int,
+        n_series_val: int,
+        n_series_test: int,
         sort_df: bool,
         verbose: bool,
         id_col: str,
@@ -627,10 +624,9 @@ class NeuralForecast:
                 self.dataset,
                 self.val_dataset,
                 self.test_dataset,
-                self.uids,
+                self.test_ids,
                 self.last_dates,
-                self.ds,
-                self.orig_indptr,
+                self.test_df,
             ) = self._prepare_fit(
                 df=df,
                 static_df=static_df,
@@ -639,19 +635,13 @@ class NeuralForecast:
                 id_col=id_col,
                 time_col=time_col,
                 target_col=target_col,
-                val_size=val_size,
-                test_size=test_size,
+                n_series_val=n_series_val,
+                n_series_test=n_series_test,
             )
             self.sort_df = sort_df
         else:
             if verbose:
                 print("Using stored dataset.")
-
-        if not self.lowmem and val_size is not None:
-            if self.dataset.min_size < (val_size + test_size):
-                warnings.warn(
-                    "Validation and test sets are larger than the shorter time-series."
-                )
 
         cols = []
         count_names = {"model": 0}
@@ -661,35 +651,26 @@ class NeuralForecast:
             if count_names[model_name] > 0:
                 model_name += str(count_names[model_name])
             cols += [model_name + n for n in model.loss.output_names]
-        if self.lowmem:
-            fcsts_df = ufp.cv_times(
-                times=self.ds,
-                uids=self.uids,
-                indptr=self.orig_indptr,
-                h=self.h,
-                test_size=test_size - self.input_size,
-                step_size=step_size,
-                id_col=id_col,
-                time_col=time_col,
-            )
-        else:
-            fcsts_df = ufp.cv_times(
-                times=self.ds,
-                uids=self.uids,
-                indptr=self.dataset.indptr,
-                h=self.h,
-                test_size=test_size,
-                step_size=step_size,
-                id_col=id_col,
-                time_col=time_col,
-            )
 
-            # the cv_times is sorted by window and then id
+        fcsts_df = ufp.cv_times(
+            times=self.test_df.ds.to_numpy(),
+            uids=self.test_ids,
+            indptr=self.test_dataset.indptr,
+            h=self.h,
+            test_size=self.test_dataset.indptr[1] - self.input_size,
+            step_size=step_size,
+            id_col=id_col,
+            time_col=time_col,
+        )
+        # the cv_times is sorted by window and then id
         fcsts_df = ufp.sort(fcsts_df, [id_col, "cutoff", time_col])
 
         col_idx = 0
         fcsts = np.full(
-            (self.dataset.n_groups * self.h * n_windows, len(cols)),
+            (
+                self.h * self.test_dataset.n_windows,
+                len(cols),
+            ),
             np.nan,
             dtype=np.float32,
         )
@@ -698,8 +679,8 @@ class NeuralForecast:
                 dataset=self.dataset,
                 val_dataset=self.val_dataset,
                 test_dataset=self.test_dataset,
-                val_size=val_size,
-                test_size=test_size,
+                val_size=0,
+                test_size=0,
             )
             model_fcsts = model.predict(
                 self.test_dataset if self.lowmem else self.dataset,
@@ -711,16 +692,11 @@ class NeuralForecast:
             output_length = len(model.loss.output_names)
             fcsts[:, col_idx : (col_idx + output_length)] = model_fcsts
             col_idx += output_length
-        if self.scalers_:
-            indptr = np.append(
-                0, np.full(self.dataset.n_groups, self.h * n_windows).cumsum()
-            )
-            fcsts = self._scalers_target_inverse_transform(fcsts, indptr)
 
         self._fitted = True
 
         # Add predictions to forecasts DataFrame
-        if isinstance(self.uids, pl_Series):
+        if isinstance(self.test_ids, pl_Series):
             fcsts = pl_DataFrame(dict(zip(cols, fcsts.T)))
         else:
             fcsts = pd.DataFrame(fcsts, columns=cols)
@@ -729,7 +705,7 @@ class NeuralForecast:
         # Add original input df's y to forecasts DataFrame
         fcsts_df = ufp.join(
             fcsts_df,
-            df[[id_col, time_col, target_col]],
+            self.test_df[[id_col, time_col, target_col]],
             how="left",
             on=[id_col, time_col],
         )
@@ -742,10 +718,9 @@ class NeuralForecast:
         self,
         df: Optional[DataFrame] = None,
         static_df: Optional[DataFrame] = None,
-        n_windows: int = 1,
         step_size: int = 1,
-        val_size: Optional[int] = 0,
-        test_size: Optional[int] = None,
+        n_series_val: Optional[int] = 0,
+        n_series_test: Optional[int] = None,
         sort_df: bool = True,
         use_init_models: bool = False,
         verbose: bool = False,
@@ -767,14 +742,8 @@ class NeuralForecast:
             If None, a previously stored dataset is required.
         static_df : pandas or polars DataFrame, optional (default=None)
             DataFrame with columns [`unique_id`] and static exogenous.
-        n_windows : int (default=1)
-            Number of windows used for cross validation.
         step_size : int (default=1)
             Step size between each window.
-        val_size : int, optional (default=None)
-            Length of validation size. If passed, set `n_windows=None`.
-        test_size : int, optional (default=None)
-            Length of test size. If passed, set `n_windows=None`.
         sort_df : bool (default=True)
             Sort `df` before fitting.
         use_init_models : bool, option (default=False)
@@ -800,34 +769,16 @@ class NeuralForecast:
             DataFrame with insample `models` columns for point predictions and probabilistic
             predictions for all fitted `models`.
         """
-        h = self.h
-        input_size = self.input_size
-        if n_windows is None and test_size is None:
-            raise Exception("you must define `n_windows` or `test_size`.")
-        if test_size is None:
-            test_size = h + step_size * (n_windows - 1)
-        elif n_windows is None:
-            if self.lowmem:
-                if (test_size - input_size - h) % step_size:
-                    raise Exception("`test_size - h` should be module `step_size`")
-                n_windows = int((test_size - input_size - h) / step_size) + 1
-            else:
-                if (test_size - h) % step_size:
-                    raise Exception("`test size - h` should be modulo `step_size`")
-                n_windows = int((test_size - h) / step_size) + 1
-        else:
-            raise Exception("you must define `n_windows` or `test_size` but not both")
-        # Recover initial model if use_init_models.
+
         if use_init_models:
             self._reset_models()
         if not refit:
             return self._no_refit_cross_validation(
                 df=df,
                 static_df=static_df,
-                n_windows=n_windows,
                 step_size=step_size,
-                val_size=val_size,
-                test_size=test_size,
+                n_series_val=n_series_val,
+                n_series_test=n_series_test,
                 sort_df=sort_df,
                 verbose=verbose,
                 id_col=id_col,
@@ -840,7 +791,7 @@ class NeuralForecast:
         validate_freq(df[time_col], self.freq)
         splits = ufp.backtest_splits(
             df,
-            n_windows=n_windows,
+            n_windows=0,
             h=self.h,
             id_col=id_col,
             time_col=time_col,
@@ -855,7 +806,7 @@ class NeuralForecast:
                 self.fit(
                     df=train,
                     static_df=static_df,
-                    val_size=val_size,
+                    val_size=0,
                     sort_df=sort_df,
                     use_init_models=False,
                     verbose=verbose,

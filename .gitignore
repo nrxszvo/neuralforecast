@@ -26,3 +26,5 @@ examples/
 .*swp
 node_modules/
 yarn.lock
+datasets/
+predictions/

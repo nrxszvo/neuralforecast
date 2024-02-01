@@ -89,6 +89,7 @@ class LowMemTSDataset(Dataset):
         h=None,
         step_size=None,
         sorted=False,
+        uids=None,
     ):
         super().__init__()
         self.input_size = input_size
@@ -114,6 +115,8 @@ class LowMemTSDataset(Dataset):
         )
         for i in range(self.n_groups):
             self.temporal[i] = torch.from_numpy(temporal[indptr[i] : indptr[i + 1]])
+
+        self.uids = uids
 
         if static is not None:
             self.static = torch.tensor(static, dtype=torch.float)
@@ -367,35 +370,36 @@ class TimeSeriesDataset(Dataset):
         return updated_dataset
 
     @staticmethod
-    def split_tvt(temporal, indptr, val_size, test_size):
-        train_size = indptr[1] - val_size - test_size
-        prev = 0
-        ahead = train_size + val_size + test_size
-        ds = []
+    def split_tvt(uids, temporal, indptr, n_series_val, n_series_test):
+        n_series = len(uids)
         sizes = np.diff(indptr)
-        for splitsz in [train_size, val_size, test_size]:
-            datad = None
-            ahead -= splitsz
-            if splitsz > 0:
-                splitip = [0]
-                for sz in sizes:
-                    splitip.append(splitip[-1] + sz - prev - ahead)
-                splittmp = np.empty((0, temporal.shape[1]))
-                for i in range(len(indptr) - 1):
-                    splittmp = np.concatenate(
-                        [splittmp, temporal[indptr[i] + prev : indptr[i + 1] - ahead]]
-                    )
-                splitszs = np.diff(splitip)
-                datad = {
-                    "temporal": splittmp,
-                    "indptr": np.array(splitip),
-                    "max_size": max(splitszs),
-                    "min_size": min(splitszs),
-                }
-            prev += splitsz
-            ds.append(datad)
+        assert np.all([sizes[i] == sizes[i + 1] for i in range(n_series - 1)])
+        series_sz = sizes[0]
 
-        return ds
+        name2idx = {name: idx for name, idx in zip(uids, indptr[:-1])}
+        testvalseries = np.random.choice(
+            uids, n_series_val + n_series_test, replace=False
+        )
+        val_series = testvalseries[:n_series_val]
+        test_series = testvalseries[n_series_val:]
+        train_series = list(filter(lambda x: x not in testvalseries, uids))
+
+        def make_split(series_ids):
+            ip = [0]
+            data = []
+            for name in series_ids:
+                ip.append(ip[-1] + series_sz)
+                idx = name2idx[name]
+                data.append(temporal[idx : idx + series_sz])
+            return {
+                "temporal": np.concatenate(data),
+                "indptr": np.array(ip),
+                "min_size": series_sz,
+                "max_size": series_sz,
+                "uids": series_ids,
+            }
+
+        return make_split(train_series), make_split(val_series), make_split(test_series)
 
     @staticmethod
     def from_df(
@@ -405,8 +409,8 @@ class TimeSeriesDataset(Dataset):
         id_col="unique_id",
         time_col="ds",
         target_col="y",
-        val_size=0,
-        test_size=0,
+        n_series_val=0,
+        n_series_test=0,
         h=None,
         input_size=None,
         step_size=None,
@@ -461,7 +465,7 @@ class TimeSeriesDataset(Dataset):
 
         if lowmem:
             traind, vald, testd = TimeSeriesDataset.split_tvt(
-                temporal, indptr, val_size, test_size
+                ids, temporal, indptr, n_series_val, n_series_test
             )
 
             def get_dataset(datad):
@@ -481,6 +485,7 @@ class TimeSeriesDataset(Dataset):
                         h=h,
                         input_size=input_size,
                         step_size=step_size,
+                        uids=datad["uids"],
                     )
 
             train_dataset = get_dataset(traind)
@@ -496,10 +501,10 @@ class TimeSeriesDataset(Dataset):
             train_dataset = TimeSeriesDataset(
                 temporal, temporal_cols, indptr, max_size, min_size, y_idx=0
             )
-        ds = df[time_col].to_numpy()
-        if sort_idxs is not None:
-            ds = ds[sort_idxs]
-        return train_dataset, val_dataset, test_dataset, indices, dates, ds, indptr
+
+        test_df = df[df.unique_id.isin(test_dataset.uids)]
+        test_ids = indices[indices.isin(test_dataset.uids)]
+        return train_dataset, val_dataset, test_dataset, test_ids, dates, test_df
 
 
 class LowMemTSDataModule(pl.LightningDataModule):
