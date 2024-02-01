@@ -1,14 +1,16 @@
-from neuralforecast.losses.numpy import mae, mse
-from neuralforecast.core import NeuralForecast
-from neuralforecast.auto import AutoNHITS
-import ray
-from ray import tune
-import matplotlib.pyplot as plt
-import numpy as np
-import dysts_wrapper as dw
-from config import get_config
 import argparse
 from datetime import datetime
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import ray
+from ray import tune
+
+from config import get_config
+from neuralforecast.auto import AutoNHITS
+from neuralforecast.core import NeuralForecast
+from neuralforecast.losses.numpy import mae, mse
 
 datestr = datetime.now().strftime("%Y%m%d%H%M%S")
 
@@ -17,7 +19,7 @@ parser.add_argument("--cfg", default="cfg.yml", help="yaml config file")
 args = parser.parse_args()
 cfgyml = get_config(args.cfg)
 
-Y_df = dw.make(seqlen=cfgyml.seqlen)
+Y_df = pd.read_csv(cfgyml.dataset)
 
 if cfgyml.n_series > 0:
     n_series = cfgyml.n_series
@@ -91,7 +93,11 @@ models = [
 nf = NeuralForecast(models=models, freq=1, lowmem=cfgyml.lowmem)
 
 Y_hat_df = nf.cross_validation(
-    df=Y_df, val_size=val_size, test_size=test_size, n_windows=None, step_size=step_size
+    df=Y_df,
+    val_size=val_size,
+    test_size=test_size,
+    n_windows=None,
+    step_size=step_size,
 )
 
 ray.shutdown()
