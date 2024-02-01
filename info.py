@@ -147,7 +147,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--pattern", default="(.*).npy", help="re for matching npy files"
     )
-    parser.add_argument("--dirname", default="datafiles", help="data file directory")
+    parser.add_argument(
+        "--dirname", default="predictions", help="prediction data directory"
+    )
     args = parser.parse_args()
 
     available = collect_available(args.pattern, args.dirname)
