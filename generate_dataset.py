@@ -98,4 +98,4 @@ if __name__ == "__main__":
     )
     parser.add_argument("--fn", default=None, help="output filename")
     args = parser.parse_args()
-    make_multi_ic(args.model, args.num_ic, args.seqlen, args.ic_perturb)
+    make_multi_ic(args.model, args.num_ic, args.seqlen, args.ic_perturb, args.fn)
