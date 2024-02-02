@@ -40,22 +40,23 @@ W = (alpha + 1) * H
 nhits_config = {
     "step_size": tune.choice([step_size]),
     # Initial Learning rate
-    "learning_rate": tune.choice(cfgyml.learning_rate),
+    "learning_rate": tune.grid_search(cfgyml.learning_rate),
     # Number of SGD steps
-    "max_steps": tune.choice(cfgyml.max_steps),
+    "max_steps": tune.grid_search(cfgyml.max_steps),
     # input_size = multiplier * H
     "input_size": tune.choice([L * step_size]),
-    "batch_size": tune.choice(cfgyml.batch_size),
+    "batch_size": tune.grid_search(cfgyml.batch_size),
+    "stack_types": tune.grid_search(cfgyml.stack_types),
     # MaxPool's Kernelsize
-    "n_pool_kernel_size": tune.choice(cfgyml.n_pool_kernel_size),
+    "n_pool_kernel_size": tune.grid_search(cfgyml.n_pool_kernel_size),
     # Interpolation expressivity ratios
-    "n_freq_downsample": tune.choice(cfgyml.n_freq_downsample),
+    "n_freq_downsample": tune.grid_search(cfgyml.n_freq_downsample),
     # Type of non-linear activation
-    "activation": tune.choice(["ReLU"]),
+    "activation": tune.grid_search(["ReLU"]),
     # Blocks per each 3 stacks
-    "n_blocks": tune.choice(cfgyml.n_blocks),
+    "n_blocks": tune.grid_search(cfgyml.n_blocks),
     # 2 512-Layers per block for each stack
-    "mlp_units": tune.choice(cfgyml.mlp_units),
+    "mlp_units": tune.grid_search(cfgyml.mlp_units),
     # Type of multi-step interpolation
     "interpolation_mode": tune.choice(["linear"]),
     # Compute validation every N epochs
@@ -108,6 +109,7 @@ if args.save:
             "config": best_config,
             "y_true": y_true,
             "y_hat": y_hat,
+            "results": nf.models[0].results,
         },
         allow_pickle=True,
     )
