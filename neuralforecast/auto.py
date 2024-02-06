@@ -693,6 +693,7 @@ class AutoNHITS(BaseAuto):
         alias=None,
         backend="ray",
         callbacks=None,
+        best_config=None,
     ):
         # Define search space, input/output sizes
         if config is None:
@@ -725,6 +726,7 @@ class AutoNHITS(BaseAuto):
             alias=alias,
             backend=backend,
             callbacks=callbacks,
+            best_config=best_config,
         )
 
 

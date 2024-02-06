@@ -13,6 +13,31 @@ from neuralforecast.core import NeuralForecast
 from neuralforecast.losses.numpy import mae, mse
 
 
+def n_unique_configs(config):
+    n_per_param = []
+    for k, v in config.items():
+        if type(v) == dict:
+            n_per_param.append(len(v["grid_search"]))
+        elif type(v) == ray.tune.search.sample.Categorical:
+            n_per_param.append(len(v))
+    return np.product(n_per_param)
+
+
+def get_single_config(config):
+    single = {}
+    for k, v in config.items():
+        if type(v) == dict:
+            single[k] = v["grid_search"][0]
+        elif type(v) in [
+            ray.tune.search.sample.Categorical,
+            ray.tune.search.sample.Integer,
+        ]:
+            single[k] = v.sample()
+        else:
+            single[k] = v
+    return single
+
+
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument("--cfg", default="cfg.yml", help="yaml config file")
 parser.add_argument(
@@ -71,6 +96,10 @@ nhits_config = {
     "lowmem": tune.choice([True]),
 }
 
+best_config = None
+if n_unique_configs(nhits_config) == 1:
+    best_config = get_single_config(nhits_config)
+
 models = [
     AutoNHITS(
         h=H * data_dim,
@@ -78,6 +107,7 @@ models = [
         step_size=data_dim,
         config=nhits_config,
         num_samples=cfgyml.num_samples,
+        best_config=best_config,
     )
 ]
 
@@ -92,7 +122,8 @@ Y_hat_df = nf.cross_validation(
 
 ray.shutdown()
 
-best_config = nf.models[0].results.get_best_result().config
+if best_config is None:
+    best_config = nf.models[0].results.get_best_result().config
 print(best_config)
 
 y_true = Y_hat_df.y.values
@@ -115,7 +146,6 @@ if args.save:
             "config": best_config,
             "y_true": y_true,
             "y_hat": y_hat,
-            "results": nf.models[0].results,
         },
         allow_pickle=True,
     )

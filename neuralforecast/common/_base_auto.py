@@ -104,6 +104,7 @@ class BaseAuto(pl.LightningModule):
         alias=None,
         backend="ray",
         callbacks=None,
+        best_config=None,
     ):
         super(BaseAuto, self).__init__()
         self.save_hyperparameters()  # Allows instantiation from a checkpoint from class
@@ -153,6 +154,11 @@ class BaseAuto(pl.LightningModule):
             valid_loss = loss
         config_base["valid_loss"] = valid_loss
 
+        if best_config != None:
+            best_config["h"] = h
+            best_config["loss"] = loss
+            best_config["valid_loss"] = valid_loss
+
         if isinstance(config, dict):
             self.config = config_base
         else:
@@ -178,6 +184,7 @@ class BaseAuto(pl.LightningModule):
         self.alias = alias
         self.backend = backend
         self.callbacks = callbacks
+        self.best_config = best_config
 
         # Base Class attributes
         self.SAMPLING_TYPE = cls_model.SAMPLING_TYPE
@@ -400,48 +407,52 @@ class BaseAuto(pl.LightningModule):
         **Returns:**<br>
         `self`: fitted instance of `BaseAuto` with best hyperparameters and results<br>.
         """
-        # we need val_size > 0 to perform
-        # hyperparameter selection.
-        search_alg = deepcopy(self.search_alg)
-        val_size = val_size if val_size > 0 else self.h
-        if self.backend == "ray":
-            results = self._tune_model(
-                cls_model=self.cls_model,
-                dataset=dataset,
-                val_dataset=val_dataset,
-                test_dataset=test_dataset,
-                val_size=val_size,
-                test_size=test_size,
-                cpus=self.cpus,
-                gpus=self.gpus,
-                verbose=self.verbose,
-                num_samples=self.num_samples,
-                search_alg=search_alg,
-                config=self.config,
-            )
-            best_config = results.get_best_result().config
-        else:
-            results = self._optuna_tune_model(
-                cls_model=self.cls_model,
-                dataset=dataset,
-                val_size=val_size,
-                test_size=test_size,
-                verbose=self.verbose,
-                num_samples=self.num_samples,
-                search_alg=search_alg,
-                config=self.config,
-            )
-            best_config = results.best_trial.user_attrs["ALL_PARAMS"]
+        # only run tuner if we have more than one unique config
+        if self.best_config is None:
+            # we need val_size > 0 to perform
+            # hyperparameter selection.
+            search_alg = deepcopy(self.search_alg)
+            val_size = val_size if val_size > 0 else self.h
+            if self.backend == "ray":
+                results = self._tune_model(
+                    cls_model=self.cls_model,
+                    dataset=dataset,
+                    val_dataset=val_dataset,
+                    test_dataset=test_dataset,
+                    val_size=val_size,
+                    test_size=test_size,
+                    cpus=self.cpus,
+                    gpus=self.gpus,
+                    verbose=self.verbose,
+                    num_samples=self.num_samples,
+                    search_alg=search_alg,
+                    config=self.config,
+                )
+                self.best_config = results.get_best_result().config
+            else:
+                results = self._optuna_tune_model(
+                    cls_model=self.cls_model,
+                    dataset=dataset,
+                    val_size=val_size,
+                    test_size=test_size,
+                    verbose=self.verbose,
+                    num_samples=self.num_samples,
+                    search_alg=search_alg,
+                    config=self.config,
+                )
+                self.best_config = results.best_trial.user_attrs["ALL_PARAMS"]
+
+            self.results = results
+
         self.model = self._fit_model(
             cls_model=self.cls_model,
-            config=best_config,
+            config=self.best_config,
             dataset=dataset,
             val_dataset=val_dataset,
             test_dataset=test_dataset,
             val_size=val_size * (1 - self.refit_with_val),
             test_size=test_size,
         )
-        self.results = results
 
         # Added attributes for compatibility with NeuralForecast core
         self.futr_exog_list = self.model.futr_exog_list
