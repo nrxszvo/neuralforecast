@@ -47,7 +47,8 @@ class BaseWindows(pl.LightningModule):
         inference_windows_batch_size,
         start_padding_enabled,
         step_size=1,
-        num_lr_decays=0,
+        num_lr_decays=3,
+        lr_decay_gamma=0.5,
         early_stop_patience_steps=-1,
         scaler_type="identity",
         futr_exog_list=None,
@@ -106,6 +107,7 @@ class BaseWindows(pl.LightningModule):
         self.lr_decay_steps = (
             max(max_steps // self.num_lr_decays, 1) if self.num_lr_decays > 0 else 10e7
         )
+        self.lr_decay_gamma = lr_decay_gamma
         self.early_stop_patience_steps = early_stop_patience_steps
         self.val_check_steps = val_check_steps
         self.windows_batch_size = windows_batch_size
@@ -184,7 +186,9 @@ class BaseWindows(pl.LightningModule):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
         scheduler = {
             "scheduler": torch.optim.lr_scheduler.StepLR(
-                optimizer=optimizer, step_size=self.lr_decay_steps, gamma=0.5
+                optimizer=optimizer,
+                step_size=self.lr_decay_steps,
+                gamma=self.lr_decay_gamma,
             ),
             "frequency": 1,
             "interval": "step",
@@ -514,6 +518,8 @@ class BaseWindows(pl.LightningModule):
             raise Exception("Loss is NaN, training stopped.")
 
         self.log("train_loss", loss, prog_bar=True, on_epoch=True)
+        cur_lr = self.trainer.optimizers[0].param_groups[0]["lr"]
+        self.log("lr", cur_lr, prog_bar=True, on_epoch=True)
         self.train_trajectories.append((self.global_step, float(loss)))
         return loss
 

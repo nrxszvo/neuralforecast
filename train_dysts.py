@@ -1,5 +1,6 @@
 import argparse
 from datetime import datetime
+import json
 
 import numpy as np
 import pandas as pd
@@ -26,25 +27,30 @@ parser.add_argument(
 args = parser.parse_args()
 cfgyml = get_config(args.cfg)
 
-Y_df = pd.read_csv(cfgyml.dataset)
+Y_df = pd.read_csv(f"datasets/{cfgyml.dataset}.csv")
+with open(f"datasets/{cfgyml.dataset}.json") as f:
+    dsmd = json.load(f)
 
 series = Y_df.unique_id.unique()
 series = series.tolist()
 
+
 H = cfgyml.H
-step_size = 3  # 3d data
+data_dim = dsmd["ndim"]
 alpha = cfgyml.alpha
 L = alpha * H
-W = (alpha + 1) * H
+W = L + H
 
 nhits_config = {
-    "step_size": tune.choice([step_size]),
+    "step_size": tune.choice([data_dim]),
     # Initial Learning rate
     "learning_rate": tune.grid_search(cfgyml.learning_rate),
     # Number of SGD steps
     "max_steps": tune.grid_search(cfgyml.max_steps),
+    "lr_decay_gamma": tune.grid_search(cfgyml.lr_decay_gamma),
+    "num_lr_decays": tune.grid_search(cfgyml.num_lr_decays),
     # input_size = multiplier * H
-    "input_size": tune.choice([L * step_size]),
+    "input_size": tune.choice([L * data_dim]),
     "batch_size": tune.grid_search(cfgyml.batch_size),
     "stack_types": tune.grid_search(cfgyml.stack_types),
     # MaxPool's Kernelsize
@@ -67,9 +73,9 @@ nhits_config = {
 
 models = [
     AutoNHITS(
-        h=H * step_size,
-        input_size=L * step_size,
-        step_size=step_size,
+        h=H * data_dim,
+        input_size=L * data_dim,
+        step_size=data_dim,
         config=nhits_config,
         num_samples=cfgyml.num_samples,
     )
@@ -81,7 +87,7 @@ Y_hat_df = nf.cross_validation(
     df=Y_df,
     n_series_val=cfgyml.n_series_val,
     n_series_test=cfgyml.n_series_test,
-    step_size=step_size,
+    step_size=data_dim,
 )
 
 ray.shutdown()
@@ -97,8 +103,8 @@ print("MSE: ", mse(y_hat, y_true))
 
 available_series = Y_hat_df.index.unique().to_numpy()
 n_series = len(available_series)
-y_true = y_true.reshape(n_series, -1, H, step_size)
-y_hat = y_hat.reshape(n_series, -1, H, step_size)
+y_true = y_true.reshape(n_series, -1, H, data_dim)
+y_hat = y_hat.reshape(n_series, -1, H, data_dim)
 
 if args.save:
     datafile = f"predictions/{args.fn}.npy"
