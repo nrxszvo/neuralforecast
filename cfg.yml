@@ -1,15 +1,16 @@
-dataset: 'Lorenz_100x10000_ic-0.01-v2'
-n_series_val: 5 
-n_series_test: 5
+dataset: 'Lorenz_1000x10K'
+n_series_val: 25 
+n_series_test: 25
 H: 300
 alpha: 5
 num_samples: 1 
-batch_size: [256, 512]
+batch_size: [256]
 max_steps: [100000]
 val_check_steps: [5000]
 learning_rate: [1.e-4]
 num_lr_decays: [6]
 lr_decay_gamma: [0.5]
+interpolation_mode: ["linear"]
 
 #three-stack configs
 #stack_types: [['identity', 'identity', identity']]
@@ -24,5 +25,12 @@ n_pool_kernel_size: [[9,4,2,1]]
 n_freq_downsample: [[180, 25, 6, 1]]
 n_blocks: [[1,1,1,1]]
 mlp_units: [[[2048,2048],[2048,2048],[2048,2048],[2048,2048]]]
-interpolation_mode: ["linear"]
+
+#five-stack configs
+#stack_types: [['identity', 'identity', 'identity', 'identity', 'identity']]
+#n_pool_kernel_size: [[45,9,4,2,1]]
+#n_freq_downsample: [[180, 60, 25, 6, 1]]
+#n_blocks: [[1,1,1,1,1]]
+#mlp_units: [[[2048,2048],[2048,2048],[2048,2048],[2048,2048]]]
+
 

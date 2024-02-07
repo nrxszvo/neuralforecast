@@ -377,12 +377,9 @@ class TimeSeriesDataset(Dataset):
         series_sz = sizes[0]
 
         name2idx = {name: idx for name, idx in zip(uids, indptr[:-1])}
-        testvalseries = sorted(
-            np.random.choice(uids, n_series_val + n_series_test, replace=False)
-        )
-        val_series = testvalseries[:n_series_val]
-        test_series = testvalseries[n_series_val:]
-        train_series = list(filter(lambda x: x not in testvalseries, uids))
+        train_series = uids[: -n_series_val - n_series_test]
+        val_series = uids[-n_series_val - n_series_test : -n_series_test]
+        test_series = uids[-n_series_test:]
 
         def make_split(series_ids):
             ip = [0]

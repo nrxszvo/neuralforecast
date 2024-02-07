@@ -12,10 +12,7 @@ import json
 def make_multi_ic(name, n_ic, seqlen, ic_perturb, fn=None):
     if fn is None:
         fn = f"{name}_{n_ic}x{seqlen}_ic-{ic_perturb}"
-    if name == "Lorenz":
-        model = flows.Lorenz()
-    else:
-        raise Exception
+    model = getattr(flows, name)()
     model_md = model._load_data()
     ndim = model_md["embedding_dimension"]
     perturb = 1 + ic_perturb - (2 * ic_perturb) * np.random.random((n_ic, ndim))

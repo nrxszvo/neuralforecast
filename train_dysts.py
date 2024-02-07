@@ -146,6 +146,7 @@ if args.save:
             "config": best_config,
             "y_true": y_true,
             "y_hat": y_hat,
+            "dataset": cfgyml.dataset,
         },
         allow_pickle=True,
     )
