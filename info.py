@@ -30,15 +30,28 @@ def calc_smape(d, ax=(0, 1, 2, 3)):
     return smape
 
 
-def calc_speed(d):
-    yt = d["y_true"]
-    mag = np.linalg.norm(yt, axis=(3))
-    dmag = np.concatenate(
-        [np.zeros((*mag.shape[:2], 1)), np.diff(mag, axis=(2))], axis=-1
+def calc_speed(yt):
+    ndim = yt.ndim
+    while yt.ndim < 4:
+        yt = yt[None]
+    dyt = np.diff(yt, axis=2)
+    magdy = np.linalg.norm(dyt, axis=(3))
+    nseries, nwin, winsize = magdy.shape
+    nsmooth = 10
+    smoother = np.ones(nsmooth)
+    smoothmag = np.empty((nseries, nwin, winsize - nsmooth + 1))
+    for i in range(nseries):
+        for j in range(nwin):
+            smoothmag[i, j] = np.convolve(magdy[i, j], smoother, mode="valid")
+    speed = np.min(smoothmag, axis=2)
+    idx = np.argmin(smoothmag, axis=2)
+    indices = (
+        np.repeat(idx[:, :, None], nsmooth, axis=2) + np.arange(nsmooth)[None, None, :]
     )
-    mspeed = np.abs(dmag).mean(axis=-1)
-    invspeed = -(mspeed - mspeed.max())
-    return invspeed
+    invspeed = -(speed - speed.max())
+    while indices.ndim > ndim - 1:
+        indices = indices[0]
+    return invspeed, indices
 
 
 def plot_dist(ds):
@@ -49,11 +62,14 @@ def plot_dist(ds):
     for d, name in ds:
         nseries, nwin, _, _ = d["y_true"].shape
         err_win = calc_smape(d, ax=(2, 3)).reshape(-1)
-        invspeed = calc_speed(d).reshape(-1)
+        invspeed = calc_speed(d["y_true"])[0].reshape(-1)
         # mu, std = expon.fit(err)
         xax = np.arange(nseries * nwin)
         ax1.scatter(xax, err_win, s=0.5, label=name)
-        ax1.scatter(xax, invspeed, s=0.5, alpha=0.6, label="inverse speed")
+        ax1t = ax1.twinx()
+        ax1t.scatter(
+            xax, invspeed, s=0.5, alpha=0.6, label="inverse speed", color="red"
+        )
         xticks = np.arange(0, nseries * nwin, nwin)
         xlabels = np.arange(nseries)
         # ax1.set_xticks(xticks, labels=xlabels)
@@ -66,6 +82,7 @@ def plot_dist(ds):
         # ax3.plot(x, p, "k", linewidth=2)
     ax1.set_xlabel("series")
     ax1.set_ylabel("sMAPE")
+    ax1t.set_ylabel("inverse speed", color="red")
     ax1.legend()
     ax1.set_title("Error by window")
 
@@ -78,7 +95,6 @@ def plot_dist(ds):
     ax3.set_ylabel("# windows")
     ax3.legend()
     ax3.set_title(", ".join([name for d, name in ds]) + "-- error distribution")
-
     plt.show()
     plt.close()
 
@@ -106,14 +122,15 @@ def plot_summary_menu(available):
         choices_menu(available, plot_summary)
 
 
-def plot_3d(ds, sidx, widx):
-    ax = plt.figure().add_subplot(projection="3d")
-    for d, name in ds:
-        ax.plot(*d["y_true"][sidx, widx].T, label=f"{name} - y_true")
-        ax.plot(*d["y_hat"][sidx, widx].T, label=name, alpha=0.6)
-    ax.legend()
-    plt.show()
-    plt.close()
+def plot_3d(d, name, choices):
+    for sidx, widx in choices:
+        ax = plt.figure().add_subplot(projection="3d")
+        _, highlight_idx = calc_speed(d["y_true"][sidx, widx])
+        ax.plot(*d["y_true"][sidx, widx].T, label="y_true")
+        ax.plot(*d["y_hat"][sidx, widx].T, label="y_hat", alpha=0.6)
+        ax.plot(*d["y_true"][sidx, widx, highlight_idx].T, alpha=0.6, color="red")
+        ax.legend()
+    plt.title(f"{name} - {sidx} - {widx}")
 
 
 def print_hparams(d):
@@ -138,14 +155,15 @@ def choices_menu(available, fn):
         print(f"{i}: {name}")
     choices = []
     while True:
-        inp = input("idx to add (a for all), p to process: ")
-        if inp == "p":
-            fn([(load(available[ch][1]), available[ch][0]) for ch in choices])
-            choices = []
-        elif inp == "a":
+        inp = input("idx to add (a for all): ")
+        if inp == "a":
             fn([(load(fn), name) for fn, name in available])
         elif inp == "":
-            break
+            if len(choices) > 0:
+                fn([(load(available[ch][1]), available[ch][0]) for ch in choices])
+                choices = []
+            else:
+                break
         else:
             try:
                 choices.append(int(inp))
@@ -154,25 +172,27 @@ def choices_menu(available, fn):
 
 
 def plot_3d_menu(ds):
-    dims = ds[0][0]["y_true"].shape
-    for d, _ in ds[1:]:
-        if not np.all(d["y_true"].shape == dims):
-            raise Exception("Shapes differ")
-
-    while True:
+    for d, name in ds:
         try:
-            d = ds[0][0]
             nser = d["y_true"].shape[0]
             nwin = d["y_true"].shape[1]
+            choices = []
             while True:
-                resp = input(f"series and window to plot [0, {nser-1}].[0, {nwin-1}]: ")
+                resp = input(
+                    f"{name}: series and window to plot [0, {nser-1}].[0, {nwin-1}]: "
+                )
                 if resp == "":
-                    return
+                    if len(choices) > 0:
+                        plot_3d(d, name, choices)
+                        choices = []
+                    break
                 else:
                     sidx, widx = resp.split(".")
-                    plot_3d(ds, int(sidx), int(widx))
+                    choices.append((int(sidx), int(widx)))
         except Exception as e:
             print(e)
+    plt.show()
+    plt.close()
 
 
 def print_metadata(ds):
