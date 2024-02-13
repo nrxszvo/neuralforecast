@@ -1,8 +1,11 @@
+from functools import partial
 import os
 import re
 import numpy as np
 import matplotlib.pyplot as plt
-# from scipy.stats import expon
+
+plt.rcParams["keymap.back"].remove("left")
+plt.rcParams["keymap.forward"].remove("right")
 
 
 def load(fn):
@@ -15,16 +18,14 @@ def get_ys(d):
     return yt, yh
 
 
-def calc_mae(d, ax=(0, 1, 2, 3)):
-    yt, yh = get_ys(d)
+def calc_mae(yt, yh, ax=(0, 1, 2, 3)):
     mae = np.abs(yt - yh)
     if len(ax) > 0:
         mae = mae.mean(axis=ax)
     return mae
 
 
-def calc_smape(d, ax=(0, 1, 2, 3)):
-    yt, yh = get_ys(d)
+def calc_smape(yt, yh, ax=(0, 1, 2, 3)):
     t = np.prod([yt.shape[i] for i in ax])
     smape = (2 / t) * np.sum(np.abs(yt - yh) / (np.abs(yt) + np.abs(yh)), axis=ax)
     return smape
@@ -42,7 +43,7 @@ def calc_speed(yt):
     smoothmag = np.empty((nseries, nwin, winsize - nsmooth + 1))
     for i in range(nseries):
         for j in range(nwin):
-            smoothmag[i, j] = np.convolve(magdy[i, j], smoother, mode="valid")
+            smoothmag[i, j] = np.convolve(magdy[i, j], smoother, mode="valid") / nsmooth
     speed = np.min(smoothmag, axis=2)
     idx = np.argmin(smoothmag, axis=2)
     indices = (
@@ -54,47 +55,159 @@ def calc_speed(yt):
     return invspeed, indices
 
 
+def _update_data(smape_plt, mae_plt, speed_plt, smape_err, mae_err, invspeed, series):
+    smape_plt.set_ydata(smape_err[series])
+    mae_plt.set_ydata(mae_err[series])
+    speed_plt.set_ydata(invspeed[series])
+
+
+def onkeypress(fn, fig, ax, state, e):
+    if e.key in ["left", "right"]:
+        series = state["series"]
+        n_series = state["nseries"]
+        if e.key == "left":
+            series = (n_series + series - 1) % n_series
+        else:
+            series = (series + 1) % n_series
+        state["series"] = series
+        fn(series)
+        ax.set_title(f"Series {state['series']} - Error by window")
+        fig.canvas.draw_idle()
+        fig.canvas.flush_events()
+
+
+def _plot_errors_by_window(d, name, fig, ax, smape_win=None):
+    yt, yh = get_ys(d)
+    nseries, nwin, _, _ = yt.shape
+    xax = np.arange(nwin)
+
+    if smape_win == None:
+        smape_win = calc_smape(yt, yh, ax=(2, 3))
+    mae_win = calc_mae(yt, yh, ax=(2, 3))
+    invspeed = calc_speed(yt)[0]
+
+    state = {"series": 0, "nseries": nseries}
+
+    ls = ""
+    m = "o"
+    ms = 1
+    smape_plt = ax.plot(
+        xax,
+        smape_win[state["series"]],
+        label="smape",
+        linestyle=ls,
+        marker=m,
+        markersize=ms,
+    )[0]
+    mae_plt = ax.plot(
+        xax,
+        mae_win[state["series"]],
+        label="mae",
+        color="green",
+        linestyle=ls,
+        marker=m,
+        markersize=ms,
+    )[0]
+
+    axt = ax.twinx()
+    speed_plt = axt.plot(
+        xax,
+        invspeed[state["series"]],
+        alpha=0.6,
+        label="inverse speed",
+        color="red",
+        linestyle=ls,
+        marker=m,
+        markersize=ms,
+    )[0]
+
+    errmin = min(smape_win.min(), mae_win.min())
+    errmax = max(smape_win.max(), mae_win.max())
+    ax.set_ylim(0.9 * errmin, 1.1 * errmax)
+    axt.set_ylim(0.9 * invspeed.min(), 1.1 * invspeed.max())
+
+    update_fn = partial(
+        _update_data,
+        smape_plt,
+        mae_plt,
+        speed_plt,
+        smape_win,
+        mae_win,
+        invspeed,
+    )
+    ax.set_xlabel("window #")
+    ax.set_ylabel("error")
+    axt.set_ylabel("inverse speed", color="red")
+    ax.legend()
+    ax.set_title(f"Series {state['series']} - Error by window")
+
+    ax.zorder = 1
+    ax.patch.set_visible(False)
+
+    annot = ax.annotate(
+        "",
+        xy=(0, 0),
+        xytext=(0, 10),
+        textcoords="offset points",
+        bbox=dict(boxstyle="round", fc="w"),
+    )
+
+    def onclick(fig, ax, nwin, annot, d, name, state, e):
+        if e.inaxes is ax:
+            if e.dblclick:
+                # sidx = int(e.xdata / nwin)
+                # widx = int(e.xdata) - sidx * nwin
+                sidx = state["series"]
+                widx = int(e.xdata)
+                annot.xy = (e.xdata, e.ydata)
+                annot.set_text(f"{sidx}.{widx}")
+                annot.set_visible(True)
+                fig.canvas.draw_idle()
+                plot_3d(d, name, [(sidx, widx)])
+                plt.show()
+            else:
+                annot.set_text("")
+                annot.set_visible(False)
+                fig.canvas.draw_idle()
+
+    fig.canvas.mpl_connect(
+        "button_press_event", partial(onclick, fig, ax, nwin, annot, d, name, state)
+    )
+
+    fig.canvas.mpl_connect(
+        "key_press_event", partial(onkeypress, update_fn, fig, ax, state)
+    )
+
+    return smape_win
+
+
 def plot_dist(ds):
-    ax1 = plt.figure().add_subplot()
-    ax2 = plt.figure().add_subplot()
-    ax3 = plt.figure().add_subplot()
+    axHist = plt.figure().add_subplot()
+    axHIdx = plt.figure().add_subplot()
+    figWErr, axesWErr = plt.subplots(len(ds), 1)
+    if len(ds) == 1:
+        axesWErr = [axesWErr]
+
     # axes are: series, window, widx, dim
-    for d, name in ds:
-        nseries, nwin, _, _ = d["y_true"].shape
-        err_win = calc_smape(d, ax=(2, 3)).reshape(-1)
-        invspeed = calc_speed(d["y_true"])[0].reshape(-1)
-        # mu, std = expon.fit(err)
-        xax = np.arange(nseries * nwin)
-        ax1.scatter(xax, err_win, s=0.5, label=name)
-        ax1t = ax1.twinx()
-        ax1t.scatter(
-            xax, invspeed, s=0.5, alpha=0.6, label="inverse speed", color="red"
-        )
-        xticks = np.arange(0, nseries * nwin, nwin)
-        xlabels = np.arange(nseries)
-        # ax1.set_xticks(xticks, labels=xlabels)
-        err_hidx = calc_smape(d, ax=(0, 1, 3))
-        ax2.scatter(np.arange(len(err_hidx)), err_hidx, s=0.5, label=name)
-        ax3.hist(err_win, bins=100, alpha=0.6, label=name)
-        # xmin, xmax = ax1.get_xlim()
-        # x = np.linspace(xmin, xmax, 100)
-        # p = expon.pdf(x, mu, std)
-        # ax3.plot(x, p, "k", linewidth=2)
-    ax1.set_xlabel("series")
-    ax1.set_ylabel("sMAPE")
-    ax1t.set_ylabel("inverse speed", color="red")
-    ax1.legend()
-    ax1.set_title("Error by window")
+    for (d, name), axWErr in zip(ds, axesWErr):
+        smape_win = _plot_errors_by_window(d, name, figWErr, axWErr)
 
-    ax2.set_xlabel("horizon index")
-    ax2.set_ylabel("sMAPE")
-    ax2.legend()
-    ax2.set_title("Error by horizon index")
+        yt, yh = get_ys(d)
 
-    ax3.set_xlabel("sMAPE")
-    ax3.set_ylabel("# windows")
-    ax3.legend()
-    ax3.set_title(", ".join([name for d, name in ds]) + "-- error distribution")
+        err_hidx = calc_smape(yt, yh, ax=(0, 1, 3))
+        axHIdx.scatter(np.arange(len(err_hidx)), err_hidx, s=0.5, label=name)
+
+        axHist.hist(smape_win.reshape(-1), bins=100, alpha=0.6, label=name)
+
+    axHIdx.set_xlabel("horizon index")
+    axHIdx.set_ylabel("sMAPE")
+    axHIdx.legend()
+    axHIdx.set_title("Error by horizon index")
+
+    axHist.set_xlabel("sMAPE")
+    axHist.set_ylabel("# windows")
+    axHist.legend()
+    axHist.set_title(", ".join([name for d, name in ds]) + "-- error distribution")
     plt.show()
     plt.close()
 
@@ -104,7 +217,8 @@ def plot_summary(ds):
     errs = []
     for d, name in ds:
         names.append(name)
-        errs.append(calc_smape(d))
+        yt, yh = get_ys(d)
+        errs.append(calc_smape(yt, yh))
     plt.bar(names, errs)
     plt.xticks(rotation=90)
     plt.tight_layout()
@@ -123,14 +237,19 @@ def plot_summary_menu(available):
 
 
 def plot_3d(d, name, choices):
+    yt, yh = get_ys(d)
     for sidx, widx in choices:
+        ytw = yt[sidx, widx]
+        yhw = yh[sidx, widx]
         ax = plt.figure().add_subplot(projection="3d")
-        _, highlight_idx = calc_speed(d["y_true"][sidx, widx])
-        ax.plot(*d["y_true"][sidx, widx].T, label="y_true")
-        ax.plot(*d["y_hat"][sidx, widx].T, label="y_hat", alpha=0.6)
-        ax.plot(*d["y_true"][sidx, widx, highlight_idx].T, alpha=0.6, color="red")
+        _, highlight_idx = calc_speed(ytw)
+        smape = calc_smape(ytw, yhw, ax=(0, 1))
+        mae = calc_mae(ytw, yhw, ax=(0, 1))
+        ax.plot(*ytw.T, label="y_true")
+        ax.plot(*yhw.T, label="y_hat", alpha=0.6)
+        ax.plot(*ytw[highlight_idx].T, alpha=0.6, color="red")
         ax.legend()
-    plt.title(f"{name} - {sidx} - {widx}")
+        ax.set_title(f"{sidx}-{widx} - smape={smape:.2f}, mae={mae:.2f}")
 
 
 def print_hparams(d):
@@ -197,8 +316,9 @@ def plot_3d_menu(ds):
 
 def print_metadata(ds):
     for d, name in ds:
-        mae = calc_mae(d)
-        smape = calc_smape(d)
+        yt, yh = get_ys(d)
+        mae = calc_mae(yt, yh)
+        smape = calc_smape(yt, yh)
         print()
         print(name)
         print(f'\tdataset: {d["dataset"]}')
