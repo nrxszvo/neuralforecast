@@ -281,15 +281,79 @@ def plot_3d(d, name, choices):
     for sidx, widx in choices:
         ytw = yt[sidx, widx]
         yhw = yh[sidx, widx]
-        ax = plt.figure().add_subplot(projection="3d")
+        fig = plt.figure()
+        ax = fig.add_subplot(projection="3d")
         _, highlight_idx = calc_speed(ytw)
         smape = calc_smape(ytw, yhw, ax=(0, 1))
         mae = calc_mae(ytw, yhw, ax=(0, 1))
-        ax.plot(*ytw.T, label="y_true")
-        ax.plot(*yhw.T, label="y_hat", alpha=0.6)
-        ax.plot(*ytw[highlight_idx].T, alpha=0.6, color="red")
+        yt3d = ax.plot(*ytw.T, label="y_true")[0]
+        yh3d = ax.plot(*yhw.T, label="y_hat", alpha=0.6)[0]
+        ys3d = ax.plot(*ytw[highlight_idx].T, alpha=0.6, color="red")[0]
         ax.legend()
         ax.set_title(f"{sidx}-{widx} - smape={smape:.2f}, mae={mae:.2f}")
+
+        def concat_yt(yt, widx, nwinyt):
+            inc = yt.shape[1] - 1
+            start = widx - (inc * (nwinyt - 1))
+            end = widx + inc
+            return np.concatenate([yt[wi] for wi in np.arange(start, end, inc)])
+
+        def onkeypress(yt, yh, fig, ax, state, e):
+            sidx = state["sidx"]
+            widx = state["widx"]
+            nseries, nwin, winsize, ndim = yt.shape
+            if e.key == "b":
+                if widx >= winsize - 1:
+                    state["nwinyt"] += 1
+                    ytw = concat_yt(yt[sidx], widx, state["nwinyt"])
+                    state["yt3d"].set_data_3d(*ytw.T)
+                    fig.canvas.draw_idle()
+            elif e.key in ["left", "right"]:
+                if e.key == "left":
+                    if widx > 0:
+                        widx -= 1
+                    else:
+                        sidx = (nseries + sidx - 1) % nseries
+                        widx = nwin - 1
+                elif e.key == "right":
+                    if widx < nwin - 1:
+                        widx += 1
+                    else:
+                        sidx = (sidx + 1) % nseries
+                        widx = 0
+
+                ytw = concat_yt(yt[sidx], widx, state["nwinyt"])
+                _, highlight_idx = calc_speed(ytw)
+                state["yt3d"].set_data_3d(*ytw.T)
+                state["yh3d"].set_data_3d(*yh[sidx, widx].T)
+                state["ys3d"].set_data_3d(*ytw[highlight_idx].T)
+                smape = state["smape"]
+                mae = state["mae"]
+                state["widx"] = widx
+                state["sidx"] = sidx
+                ax.set_title(f"{sidx}-{widx} - smape={smape:.2f}, mae={mae:.2f}")
+                fig.canvas.draw_idle()
+
+        fig.canvas.mpl_connect(
+            "key_press_event",
+            partial(
+                onkeypress,
+                yt,
+                yh,
+                fig,
+                ax,
+                {
+                    "sidx": sidx,
+                    "widx": widx,
+                    "yt3d": yt3d,
+                    "yh3d": yh3d,
+                    "ys3d": ys3d,
+                    "smape": smape,
+                    "mae": mae,
+                    "nwinyt": 1,
+                },
+            ),
+        )
 
 
 def print_hparams(d):
