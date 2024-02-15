@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 
 plt.rcParams["keymap.back"].remove("left")
 plt.rcParams["keymap.forward"].remove("right")
+plt.rcParams["keymap.save"].remove("s")
 
 
 def load(fn):
@@ -71,7 +72,36 @@ def onkeypress(fn, fig, ax, state, e):
             series = (series + 1) % n_series
         state["series"] = series
         fn(series)
-        ax.set_title(f"Series {state['series']} - Error by window")
+
+        ax.set_title(f'Series {state["series"]} - {state["name"]}', fontsize=10)
+        fig.canvas.draw_idle()
+        fig.canvas.flush_events()
+
+    elif e.key in ["i", "m", "s"]:
+        if e.key == "i":
+            line = state["speed_plt"]
+        elif e.key == "m":
+            line = state["mae_plt"]
+            line_lim = state["mae_lim"]
+            other = state["smape_plt"]
+            other_lim = state["smape_lim"]
+        else:
+            line = state["smape_plt"]
+            line_lim = state["smape_lim"]
+            other = state["mae_plt"]
+            other_lim = state["mae_lim"]
+
+        line.set_visible(not line.get_visible())
+
+        if e.key in ["m", "s"]:
+            if line.get_visible() and other.get_visible():
+                lmin, lmax = state["global_lim"]
+            elif line.get_visible():
+                lmin, lmax = line_lim
+            else:
+                lmin, lmax = other_lim
+            ax.set_ylim(lmin, lmax)
+
         fig.canvas.draw_idle()
         fig.canvas.flush_events()
 
@@ -86,7 +116,9 @@ def _plot_errors_by_window(d, name, fig, ax, smape_win=None):
     mae_win = calc_mae(yt, yh, ax=(2, 3))
     invspeed = calc_speed(yt)[0]
 
-    state = {"series": 0, "nseries": nseries}
+    state = {"series": 0, "nseries": nseries, "name": name}
+
+    fig.suptitle("Errors by window")
 
     ls = ""
     m = "o"
@@ -121,9 +153,18 @@ def _plot_errors_by_window(d, name, fig, ax, smape_win=None):
         markersize=ms,
     )[0]
 
-    errmin = min(smape_win.min(), mae_win.min())
-    errmax = max(smape_win.max(), mae_win.max())
-    ax.set_ylim(0.9 * errmin, 1.1 * errmax)
+    state["smape_plt"] = smape_plt
+    state["mae_plt"] = mae_plt
+    state["speed_plt"] = speed_plt
+
+    state["smape_lim"] = (0.9 * smape_win.min(), 1.1 * smape_win.max())
+    state["mae_lim"] = (0.9 * mae_win.min(), 1.1 * mae_win.max())
+    state["global_lim"] = (
+        min(state["smape_lim"][0], state["mae_lim"][0]),
+        max(state["smape_lim"][1], state["mae_lim"][1]),
+    )
+
+    ax.set_ylim(*state["global_lim"])
     axt.set_ylim(0.9 * invspeed.min(), 1.1 * invspeed.max())
 
     update_fn = partial(
@@ -135,11 +176,10 @@ def _plot_errors_by_window(d, name, fig, ax, smape_win=None):
         mae_win,
         invspeed,
     )
-    ax.set_xlabel("window #")
     ax.set_ylabel("error")
     axt.set_ylabel("inverse speed", color="red")
     ax.legend()
-    ax.set_title(f"Series {state['series']} - Error by window")
+    ax.set_title(f'Series {state["series"]} - {state["name"]}', fontsize=10)
 
     ax.zorder = 1
     ax.patch.set_visible(False)
@@ -155,10 +195,8 @@ def _plot_errors_by_window(d, name, fig, ax, smape_win=None):
     def onclick(fig, ax, nwin, annot, d, name, state, e):
         if e.inaxes is ax:
             if e.dblclick:
-                # sidx = int(e.xdata / nwin)
-                # widx = int(e.xdata) - sidx * nwin
                 sidx = state["series"]
-                widx = int(e.xdata)
+                widx = int(e.xdata + 0.5)
                 annot.xy = (e.xdata, e.ydata)
                 annot.set_text(f"{sidx}.{widx}")
                 annot.set_visible(True)
@@ -191,6 +229,8 @@ def plot_dist(ds):
     # axes are: series, window, widx, dim
     for (d, name), axWErr in zip(ds, axesWErr):
         smape_win = _plot_errors_by_window(d, name, figWErr, axWErr)
+        if name == ds[-1][1]:
+            axWErr.set_xlabel("window #")
 
         yt, yh = get_ys(d)
 
