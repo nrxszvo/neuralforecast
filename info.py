@@ -7,6 +7,9 @@ import matplotlib.pyplot as plt
 plt.rcParams["keymap.back"].remove("left")
 plt.rcParams["keymap.forward"].remove("right")
 plt.rcParams["keymap.save"].remove("s")
+plt.rcParams["keymap.pan"].remove("p")
+plt.rcParams["keymap.zoom"].remove("o")
+plt.rcParams["keymap.quit"].remove("q")
 
 
 def load(fn):
@@ -28,7 +31,7 @@ def calc_mae(yt, yh, ax=(0, 1, 2, 3)):
 
 def calc_smape(yt, yh, ax=(0, 1, 2, 3)):
     t = np.prod([yt.shape[i] for i in ax])
-    smape = (2 / t) * np.sum(np.abs(yt - yh) / (np.abs(yt) + np.abs(yh)), axis=ax)
+    smape = (200 / t) * np.sum(np.abs(yt - yh) / (np.abs(yt) + np.abs(yh)), axis=ax)
     return smape
 
 
@@ -73,7 +76,7 @@ def onkeypress(fn, fig, ax, state, e):
         state["series"] = series
         fn(series)
 
-        ax.set_title(f'Series {state["series"]} - {state["name"]}', fontsize=10)
+        ax.set_title(f'{state["name"]} - Series {state["series"]}', fontsize=10)
         fig.canvas.draw_idle()
         fig.canvas.flush_events()
 
@@ -118,7 +121,7 @@ def _plot_errors_by_window(d, name, fig, ax, smape_win=None):
 
     state = {"series": 0, "nseries": nseries, "name": name}
 
-    fig.suptitle("Errors by window")
+    fig.suptitle("average error by window")
 
     ls = ""
     m = "o"
@@ -126,7 +129,7 @@ def _plot_errors_by_window(d, name, fig, ax, smape_win=None):
     smape_plt = ax.plot(
         xax,
         smape_win[state["series"]],
-        label="smape",
+        label="sMAPE",
         linestyle=ls,
         marker=m,
         markersize=ms,
@@ -134,7 +137,7 @@ def _plot_errors_by_window(d, name, fig, ax, smape_win=None):
     mae_plt = ax.plot(
         xax,
         mae_win[state["series"]],
-        label="mae",
+        # label="mae",
         color="green",
         linestyle=ls,
         marker=m,
@@ -177,9 +180,9 @@ def _plot_errors_by_window(d, name, fig, ax, smape_win=None):
         invspeed,
     )
     ax.set_ylabel("error")
-    axt.set_ylabel("inverse speed", color="red")
-    ax.legend()
-    ax.set_title(f'Series {state["series"]} - {state["name"]}', fontsize=10)
+    axt.set_ylabel("inverse speed")
+    ax.legend([smape_plt, speed_plt], [smape_plt.get_label(), speed_plt.get_label()])
+    ax.set_title(f'{state["name"]} - Series {state["series"]}', fontsize=10)
 
     ax.zorder = 1
     ax.patch.set_visible(False)
@@ -242,12 +245,16 @@ def plot_dist(ds):
     axHIdx.set_xlabel("horizon index")
     axHIdx.set_ylabel("sMAPE")
     axHIdx.legend()
-    axHIdx.set_title("Error by horizon index")
+    axHIdx.set_title("Average error by horizon index")
 
     axHist.set_xlabel("sMAPE")
     axHist.set_ylabel("# windows")
-    axHist.legend()
-    axHist.set_title(", ".join([name for d, name in ds]) + "-- error distribution")
+    axHist.set_yscale("log")
+    if len(ds) > 1:
+        axHist.legend()
+        axHist.set_title("Error distribution")
+    else:
+        axHist.set_title(ds[0][1] + " -- error distribution")
     plt.show()
     plt.close()
 
@@ -286,11 +293,13 @@ def plot_3d(d, name, choices):
         _, highlight_idx = calc_speed(ytw)
         smape = calc_smape(ytw, yhw, ax=(0, 1))
         mae = calc_mae(ytw, yhw, ax=(0, 1))
-        yt3d = ax.plot(*ytw.T, label="y_true")[0]
-        yh3d = ax.plot(*yhw.T, label="y_hat", alpha=0.6)[0]
-        ys3d = ax.plot(*ytw[highlight_idx].T, alpha=0.6, color="red")[0]
+        yt3d = ax.plot(*ytw.T, label="reference")[0]
+        yh3d = ax.plot(*yhw.T, label="prediction", alpha=0.6)[0]
+        ys3d = ax.plot(
+            *ytw[highlight_idx].T, alpha=0.6, color="red", label="minimum speed region"
+        )[0]
         ax.legend()
-        ax.set_title(f"{sidx}-{widx} - smape={smape:.2f}, mae={mae:.2f}")
+        ax.set_title(f"Series {sidx}, Window {widx}, sMAPE Error: {smape:.2f}")
 
         def concat_yt(yt, widx, nwinyt):
             inc = yt.shape[1] - 1
@@ -302,7 +311,17 @@ def plot_3d(d, name, choices):
             sidx = state["sidx"]
             widx = state["widx"]
             nseries, nwin, winsize, ndim = yt.shape
-            if e.key == "b":
+            if e.key == "i":
+                viz = state["ys3d"].get_visible()
+                label = ""
+                if "ys3dlabel" in state:
+                    label = state["ys3dlabel"]
+                state["ys3d"].set_visible(not viz)
+                state["ys3dlabel"] = state["ys3d"].get_label()
+                state["ys3d"].set_label(label)
+                ax.legend()
+                fig.canvas.draw_idle()
+            elif e.key == "b":
                 if widx >= winsize - 1:
                     state["nwinyt"] += 1
                     ytw = concat_yt(yt[sidx], widx, state["nwinyt"])
@@ -324,14 +343,14 @@ def plot_3d(d, name, choices):
 
                 ytw = concat_yt(yt[sidx], widx, state["nwinyt"])
                 _, highlight_idx = calc_speed(ytw)
+                smape = calc_smape(ytw, yh[sidx, widx], ax=(0, 1))
                 state["yt3d"].set_data_3d(*ytw.T)
                 state["yh3d"].set_data_3d(*yh[sidx, widx].T)
                 state["ys3d"].set_data_3d(*ytw[highlight_idx].T)
-                smape = state["smape"]
                 mae = state["mae"]
                 state["widx"] = widx
                 state["sidx"] = sidx
-                ax.set_title(f"{sidx}-{widx} - smape={smape:.2f}, mae={mae:.2f}")
+                ax.set_title(f"Series {sidx}, Window {widx}, sMAPE Error: {smape:.2f}")
                 fig.canvas.draw_idle()
 
         fig.canvas.mpl_connect(
@@ -383,13 +402,18 @@ def choices_menu(available, fn):
             fn([(load(fn), name) for fn, name in available])
         elif inp == "":
             if len(choices) > 0:
-                fn([(load(available[ch][1]), available[ch][0]) for ch in choices])
+                fn([(load(fn), name) for fn, name in choices])
                 choices = []
             else:
                 break
         else:
             try:
-                choices.append(int(inp))
+                c = int(inp)
+                name = available[c][0]
+                n = input("optional title for plot: ")
+                if n != "":
+                    name = n
+                choices.append((available[c][1], name))
             except Exception as e:
                 print(e)
 
@@ -425,7 +449,8 @@ def print_metadata(ds):
         smape = calc_smape(yt, yh)
         print()
         print(name)
-        print(f'\tdataset: {d["dataset"]}')
+        if "dataset" in d:
+            print(f'\tdataset: {d["dataset"]}')
         print(f"\tMAE: {mae:.3f}")
         print(f"\tsMAPE: {smape:.3f}")
         print("\tconfig:")
