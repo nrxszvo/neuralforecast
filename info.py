@@ -3,6 +3,7 @@ import os
 import re
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.animation as animation
 
 plt.rcParams["keymap.back"].remove("left")
 plt.rcParams["keymap.forward"].remove("right")
@@ -10,6 +11,7 @@ plt.rcParams["keymap.save"].remove("s")
 plt.rcParams["keymap.pan"].remove("p")
 plt.rcParams["keymap.zoom"].remove("o")
 plt.rcParams["keymap.quit"].remove("q")
+plt.rcParams["keymap.home"].remove("r")
 
 
 def load(fn):
@@ -204,7 +206,7 @@ def _plot_errors_by_window(d, name, fig, ax, smape_win=None):
                 annot.set_text(f"{sidx}.{widx}")
                 annot.set_visible(True)
                 fig.canvas.draw_idle()
-                plot_3d(d, name, [(sidx, widx)])
+                plot_3d(d, name, sidx, widx)
                 plt.show()
             else:
                 annot.set_text("")
@@ -224,6 +226,7 @@ def _plot_errors_by_window(d, name, fig, ax, smape_win=None):
 
 def plot_dist(ds):
     axHist = plt.figure().add_subplot()
+    axHistT = axHist.twinx()
     axHIdx = plt.figure().add_subplot()
     figWErr, axesWErr = plt.subplots(len(ds), 1)
     if len(ds) == 1:
@@ -240,8 +243,16 @@ def plot_dist(ds):
         err_hidx = calc_smape(yt, yh, ax=(0, 1, 3))
         axHIdx.scatter(np.arange(len(err_hidx)), err_hidx, s=0.5, label=name)
 
-        axHist.hist(smape_win.reshape(-1), bins=100, alpha=0.6, label=name)
-
+        axHist.hist(smape_win.reshape(-1), bins=100, alpha=0.6)
+        axHistT.hist(
+            smape_win.reshape(-1),
+            bins=100,
+            cumulative=True,
+            histtype="step",
+            density=True,
+            label="CDF",
+            color="orange",
+        )
     axHIdx.set_xlabel("horizon index")
     axHIdx.set_ylabel("sMAPE")
     axHIdx.legend()
@@ -250,6 +261,7 @@ def plot_dist(ds):
     axHist.set_xlabel("sMAPE")
     axHist.set_ylabel("# windows")
     axHist.set_yscale("log")
+    axHistT.set_ylabel("cumulative likelihood")
     if len(ds) > 1:
         axHist.legend()
         axHist.set_title("Error distribution")
@@ -283,96 +295,143 @@ def plot_summary_menu(available):
         choices_menu(available, plot_summary)
 
 
-def plot_3d(d, name, choices):
+def plot_3d(d, name, sidx, widx):
     yt, yh = get_ys(d)
-    for sidx, widx in choices:
+    ytw = yt[sidx, widx]
+    yhw = yh[sidx, widx]
+    fig = plt.figure()
+    ax = fig.add_subplot(projection="3d")
+    _, highlight_idx = calc_speed(ytw)
+    smape = calc_smape(ytw, yhw, ax=(0, 1))
+    mae = calc_mae(ytw, yhw, ax=(0, 1))
+    yt3d = ax.plot(*ytw.T, label="reference")[0]
+    yh3d = ax.plot(*yhw.T, label="prediction", alpha=0.6)[0]
+    ys3d = ax.plot(
+        *ytw[highlight_idx].T,
+        alpha=0.6,
+        color="red",
+        label="minimum speed region",
+    )[0]
+    ax.legend(loc="upper right", bbox_to_anchor=(1, 1), bbox_transform=fig.transFigure)
+
+    ax.set_title(f"Series {sidx}, Window {widx}, sMAPE Error: {smape:.2f}", loc="left")
+
+    def concat_yt(yt, widx, nwinyt):
+        inc = yt.shape[1] - 1
+        start = widx - (inc * (nwinyt - 1))
+        end = widx + inc
+        return np.concatenate([yt[wi] for wi in np.arange(start, end, inc)])
+
+    def update(yt, yh, ax, state, frame):
+        widx = state["widx"] + frame
+        sidx = state["sidx"]
+
         ytw = yt[sidx, widx]
-        yhw = yh[sidx, widx]
-        fig = plt.figure()
-        ax = fig.add_subplot(projection="3d")
         _, highlight_idx = calc_speed(ytw)
-        smape = calc_smape(ytw, yhw, ax=(0, 1))
-        mae = calc_mae(ytw, yhw, ax=(0, 1))
-        yt3d = ax.plot(*ytw.T, label="reference")[0]
-        yh3d = ax.plot(*yhw.T, label="prediction", alpha=0.6)[0]
-        ys3d = ax.plot(
-            *ytw[highlight_idx].T, alpha=0.6, color="red", label="minimum speed region"
-        )[0]
-        ax.legend()
-        ax.set_title(f"Series {sidx}, Window {widx}, sMAPE Error: {smape:.2f}")
+        smape = calc_smape(ytw, yh[sidx, widx], ax=(0, 1))
+        state["yt3d"].set_data_3d(*ytw.T)
+        state["yh3d"].set_data_3d(*yh[sidx, widx].T)
+        state["ys3d"].set_data_3d(*ytw[highlight_idx[0]].T)
+        ax.set_title(f"window {widx} - sMAPE Error: {smape:.2f}", loc="left")
+        return state["yt3d"], state["yh3d"], state["ys3d"]
 
-        def concat_yt(yt, widx, nwinyt):
-            inc = yt.shape[1] - 1
-            start = widx - (inc * (nwinyt - 1))
-            end = widx + inc
-            return np.concatenate([yt[wi] for wi in np.arange(start, end, inc)])
-
-        def onkeypress(yt, yh, fig, ax, state, e):
-            sidx = state["sidx"]
-            widx = state["widx"]
-            nseries, nwin, winsize, ndim = yt.shape
-            if e.key == "i":
-                viz = state["ys3d"].get_visible()
-                label = ""
-                if "ys3dlabel" in state:
-                    label = state["ys3dlabel"]
-                state["ys3d"].set_visible(not viz)
-                state["ys3dlabel"] = state["ys3d"].get_label()
-                state["ys3d"].set_label(label)
-                ax.legend()
-                fig.canvas.draw_idle()
-            elif e.key == "b":
-                if widx >= winsize - 1:
-                    state["nwinyt"] += 1
-                    ytw = concat_yt(yt[sidx], widx, state["nwinyt"])
-                    state["yt3d"].set_data_3d(*ytw.T)
-                    fig.canvas.draw_idle()
-            elif e.key in ["left", "right"]:
-                if e.key == "left":
-                    if widx > 0:
-                        widx -= 1
-                    else:
-                        sidx = (nseries + sidx - 1) % nseries
-                        widx = nwin - 1
-                elif e.key == "right":
-                    if widx < nwin - 1:
-                        widx += 1
-                    else:
-                        sidx = (sidx + 1) % nseries
-                        widx = 0
-
+    def onkeypress(yt, yh, fig, ax, state, e):
+        sidx = state["sidx"]
+        widx = state["widx"]
+        nseries, nwin, winsize, ndim = yt.shape
+        if e.key == "i":
+            viz = state["ys3d"].get_visible()
+            label = ""
+            if "ys3dlabel" in state:
+                label = state["ys3dlabel"]
+            state["ys3d"].set_visible(not viz)
+            state["ys3dlabel"] = state["ys3d"].get_label()
+            state["ys3d"].set_label(label)
+            ax.legend(
+                loc="upper right",
+                bbox_to_anchor=(1, 1),
+                bbox_transform=fig.transFigure,
+            )
+            fig.canvas.draw_idle()
+        elif e.key == "b":
+            if widx >= winsize - 1:
+                state["nwinyt"] += 1
                 ytw = concat_yt(yt[sidx], widx, state["nwinyt"])
-                _, highlight_idx = calc_speed(ytw)
-                smape = calc_smape(ytw, yh[sidx, widx], ax=(0, 1))
                 state["yt3d"].set_data_3d(*ytw.T)
-                state["yh3d"].set_data_3d(*yh[sidx, widx].T)
-                state["ys3d"].set_data_3d(*ytw[highlight_idx].T)
-                mae = state["mae"]
-                state["widx"] = widx
-                state["sidx"] = sidx
-                ax.set_title(f"Series {sidx}, Window {widx}, sMAPE Error: {smape:.2f}")
                 fig.canvas.draw_idle()
+        elif e.key in ["left", "right"]:
+            if e.key == "left":
+                if widx > 0:
+                    widx -= 1
+                else:
+                    sidx = (nseries + sidx - 1) % nseries
+                    widx = nwin - 1
+            elif e.key == "right":
+                if widx < nwin - 1:
+                    widx += 1
+                else:
+                    sidx = (sidx + 1) % nseries
+                    widx = 0
 
-        fig.canvas.mpl_connect(
-            "key_press_event",
-            partial(
-                onkeypress,
-                yt,
-                yh,
+            ytw = concat_yt(yt[sidx], widx, state["nwinyt"])
+            _, highlight_idx = calc_speed(ytw)
+            smape = calc_smape(ytw, yh[sidx, widx], ax=(0, 1))
+            state["yt3d"].set_data_3d(*ytw.T)
+            state["yh3d"].set_data_3d(*yh[sidx, widx].T)
+            state["ys3d"].set_data_3d(*ytw[highlight_idx[0]].T)
+            mae = state["mae"]
+            state["widx"] = widx
+            state["sidx"] = sidx
+            # ax.set_title(f"Series {sidx}, Window {widx}, sMAPE Error: {smape:.2f}")
+            ax.set_title(f"Window {widx} - sMAPE Error: {smape:.2f}", loc="left")
+
+            fig.canvas.draw_idle()
+        elif e.key == "r":
+            state["ys3d"].set_label("point of departure")
+            ax.legend(
+                loc="upper right", bbox_to_anchor=(1, 1), bbox_transform=fig.transFigure
+            )
+            state["ys3d"].set_marker("o")
+            ani = animation.FuncAnimation(
                 fig,
-                ax,
-                {
-                    "sidx": sidx,
-                    "widx": widx,
-                    "yt3d": yt3d,
-                    "yh3d": yh3d,
-                    "ys3d": ys3d,
-                    "smape": smape,
-                    "mae": mae,
-                    "nwinyt": 1,
-                },
-            ),
-        )
+                func=partial(
+                    update,
+                    yt,
+                    yh,
+                    ax,
+                    {
+                        "sidx": sidx,
+                        "widx": widx,
+                        "yt3d": state["yt3d"],
+                        "yh3d": state["yh3d"],
+                        "ys3d": state["ys3d"],
+                    },
+                ),
+                frames=90,
+                interval=100,
+            )
+            ani.save("animate.gif", dpi=50, writer=animation.PillowWriter(fps=10))
+
+    fig.canvas.mpl_connect(
+        "key_press_event",
+        partial(
+            onkeypress,
+            yt,
+            yh,
+            fig,
+            ax,
+            {
+                "sidx": sidx,
+                "widx": widx,
+                "yt3d": yt3d,
+                "yh3d": yh3d,
+                "ys3d": ys3d,
+                "smape": smape,
+                "mae": mae,
+                "nwinyt": 1,
+            },
+        ),
+    )
 
 
 def print_hparams(d):
@@ -388,7 +447,7 @@ def collect_available(pattern, dirname):
     for fn in sorted(os.listdir(dirname)):
         m = re.match(pattern, fn)
         if m != None:
-            available.append((m.group(1), f"{dirname}/{fn}"))
+            available.append((f"{dirname}/{fn}", m.group(1)))
     return available
 
 
@@ -409,35 +468,27 @@ def choices_menu(available, fn):
         else:
             try:
                 c = int(inp)
-                name = available[c][0]
+                name = available[c][1]
                 n = input("optional title for plot: ")
                 if n != "":
                     name = n
-                choices.append((available[c][1], name))
+                choices.append((available[c][0], name))
             except Exception as e:
                 print(e)
 
 
 def plot_3d_menu(ds):
-    for d, name in ds:
-        try:
-            nser = d["y_true"].shape[0]
-            nwin = d["y_true"].shape[1]
-            choices = []
-            while True:
-                resp = input(
-                    f"{name}: series and window to plot [0, {nser-1}].[0, {nwin-1}]: "
-                )
-                if resp == "":
-                    if len(choices) > 0:
-                        plot_3d(d, name, choices)
-                        choices = []
-                    break
-                else:
-                    sidx, widx = resp.split(".")
-                    choices.append((int(sidx), int(widx)))
-        except Exception as e:
-            print(e)
+    if len(ds) > 1:
+        raise Exception("plot_3d only supports one dataset")
+    d, name = ds[0]
+    try:
+        nser = d["y_true"].shape[0]
+        nwin = d["y_true"].shape[1]
+        resp = input(f"{name}: series and window to plot [0, {nser-1}].[0, {nwin-1}]: ")
+        sidx, widx = resp.split(".")
+        plot_3d(d, name, int(sidx), int(widx))
+    except Exception as e:
+        print(e)
     plt.show()
     plt.close()
 
