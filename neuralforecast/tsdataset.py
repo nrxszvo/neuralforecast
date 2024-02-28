@@ -139,22 +139,6 @@ class LowMemTSDataset(Dataset):
         w_idx = self.step_size * (idx - (s_idx * self._wins_per_series))
         window = self.temporal[s_idx, w_idx : w_idx + self.window_size]
 
-        """
-        # Sample and Available conditions
-        available_idx = self.temporal_cols.get_loc("available_mask")
-        available_condition = window[: self.input_size, available_idx]
-        available_condition = torch.sum(available_condition)
-        final_condition = available_condition > 0
-        sample_condition = window[self.input_size :, available_idx]
-        sample_condition = torch.sum(sample_condition)
-        final_condition = (sample_condition > 0) & (available_condition > 0)
-
-        if final_condition.sum() == 0:
-            raise Exception("No windows available for training")
-
-        window = window[final_condition]
-        """
-
         return window
 
     def __getitem__(self, idx):
@@ -516,6 +500,7 @@ class LowMemTSDataModule(pl.LightningDataModule):
         drop_last=False,
     ):
         super().__init__()
+        print("num workers ", num_workers)
         self.train_dataset = train_dataset
         self.valid_dataset = val_dataset
         self.test_dataset = test_dataset

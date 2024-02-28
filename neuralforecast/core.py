@@ -652,7 +652,7 @@ class NeuralForecast:
                 model_name += str(count_names[model_name])
             cols += [model_name + n for n in model.loss.output_names]
 
-        fcsts_df = ufp.cv_times(
+        """fcsts_df = ufp.cv_times(
             times=self.test_df.ds.to_numpy(),
             uids=self.test_ids,
             indptr=self.test_dataset.indptr,
@@ -664,7 +664,7 @@ class NeuralForecast:
         )
         # the cv_times is sorted by window and then id
         fcsts_df = ufp.sort(fcsts_df, [id_col, "cutoff", time_col])
-
+        """
         col_idx = 0
         fcsts = np.full(
             (
@@ -700,10 +700,11 @@ class NeuralForecast:
             fcsts = pl_DataFrame(dict(zip(cols, fcsts.T)))
         else:
             fcsts = pd.DataFrame(fcsts, columns=cols)
-        fcsts_df = ufp.horizontal_concat([fcsts_df, fcsts])
+        # fcsts_df = ufp.horizontal_concat([fcsts_df, fcsts])
+        return fcsts, self.test_df
 
         # Add original input df's y to forecasts DataFrame
-        fcsts_df = ufp.join(
+        """fcsts_df = ufp.join(
             fcsts_df,
             self.test_df[[id_col, time_col, target_col]],
             how="left",
@@ -713,6 +714,7 @@ class NeuralForecast:
             _warn_id_as_idx()
             fcsts_df = fcsts_df.set_index(id_col)
         return fcsts_df
+        """
 
     def cross_validation(
         self,

@@ -1,16 +1,18 @@
 import argparse
 from datetime import datetime
 import json
+import os
 
 import numpy as np
 import pandas as pd
+import torch
 import ray
 from ray import tune
 
 from config import get_config
 from neuralforecast.auto import AutoNHITS
 from neuralforecast.core import NeuralForecast
-from neuralforecast.losses.numpy import mae, mse
+# from neuralforecast.losses.numpy import mae, mse
 
 
 def n_unique_configs(config):
@@ -52,16 +54,23 @@ parser.add_argument(
 args = parser.parse_args()
 cfgyml = get_config(args.cfg)
 
-Y_df = pd.read_csv(f"datasets/{cfgyml.dataset}.csv")
 with open(f"datasets/{cfgyml.dataset}.json") as f:
     dsmd = json.load(f)
 
-series = Y_df.unique_id.unique()
-series = series.tolist()
+data_dim = dsmd["ndim"]
+total_pps = dsmd["points_per_series"]
+pps = cfgyml.points_per_series
 
+skiprows = lambda idx: idx != 0 and (idx - 1) % (data_dim * total_pps) >= (
+    data_dim * pps
+)
+Y_df = pd.read_csv(
+    f"datasets/{cfgyml.dataset}.csv",
+    skiprows=skiprows,
+)
+series = Y_df.unique_id.unique().tolist()
 
 H = cfgyml.H
-data_dim = dsmd["ndim"]
 alpha = cfgyml.alpha
 L = alpha * H
 W = L + H
@@ -94,6 +103,7 @@ nhits_config = {
     "val_check_steps": tune.choice(cfgyml.val_check_steps),
     "random_seed": tune.randint(1, 10),
     "lowmem": tune.choice([True]),
+    "num_workers_loader": tune.choice([int(os.cpu_count() / 2)]),
 }
 
 best_config = None
@@ -113,36 +123,43 @@ models = [
 
 nf = NeuralForecast(models=models, freq=100, lowmem=True)
 
-Y_hat_df = nf.cross_validation(
+yh_df, yt_df = nf.cross_validation(
     df=Y_df,
     n_series_val=cfgyml.n_series_val,
     n_series_test=cfgyml.n_series_test,
     step_size=data_dim,
 )
-
 ray.shutdown()
 
 if best_config is None:
     best_config = nf.models[0].results.get_best_result().config
 print(best_config)
+del nf
 
-y_true = Y_hat_df.y.values
-y_hat = Y_hat_df["AutoNHITS"].values
+yh_raw = yh_df.AutoNHITS.to_numpy().astype(np.float32)
+del yh_df
+y_hat = yh_raw.reshape(cfgyml.n_series_test, pps - W + 1, H, data_dim)
 
-print("MAE: ", mae(y_hat, y_true))
-print("MSE: ", mse(y_hat, y_true))
+yt_raw = yt_df.y.to_numpy().astype(np.float32)
+del yt_df
+yt_raw = yt_raw.reshape(cfgyml.n_series_test, pps, data_dim)
+yt_raw = yt_raw[:, L:, :]
+unfold = torch.nn.Unfold((H, 1))
+yt_raw_th = torch.from_numpy(yt_raw)
+yt_raw_th = yt_raw_th.permute(0, 2, 1)
+yt_th = unfold(yt_raw_th[:, :, :, None]).permute(0, 2, 1)
+del yt_raw_th
+yt_th = yt_th.reshape(cfgyml.n_series_test, -1, data_dim, H).permute(0, 1, 3, 2)
+y_true = yt_th.numpy()
 
-available_series = Y_hat_df.index.unique().to_numpy()
-n_series = len(available_series)
-y_true = y_true.reshape(n_series, -1, H, data_dim)
-y_hat = y_hat.reshape(n_series, -1, H, data_dim)
+# print("MAE: ", mae(y_hat, y_true))
+# print("MSE: ", mse(y_hat, y_true))
 
 if args.save:
     datafile = f"predictions/{args.fn}.npy"
     np.save(
         datafile,
         {
-            "series": available_series,
             "config": best_config,
             "y_true": y_true,
             "y_hat": y_hat,

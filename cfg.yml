@@ -1,14 +1,16 @@
-dataset: 'Lorenz_1000x10K'
-n_series_val: 25 
-n_series_test: 25
-H: 300
-alpha: 5
+dataset: 'Lorenz_10Kx10K'
+n_series: 10000
+points_per_series: 6000 
+n_series_val: 50
+n_series_test: 250
+H: 100
+alpha: 5 
 num_samples: 1 
-batch_size: [256]
-max_steps: [100000]
+batch_size: [512]
+max_steps: [300000]
 val_check_steps: [5000]
-learning_rate: [1.e-4]
-num_lr_decays: [6]
+learning_rate: [5.e-5]
+num_lr_decays: [10]
 lr_decay_gamma: [0.5]
 interpolation_mode: ["linear"]
 
@@ -21,10 +23,10 @@ interpolation_mode: ["linear"]
 
 #four-stack configs
 stack_types: [['identity', 'identity', 'identity', 'identity']]
-n_pool_kernel_size: [[9,4,2,1]]
-n_freq_downsample: [[180, 25, 6, 1]]
+n_pool_kernel_size: [[10,4,2,1]]
+n_freq_downsample: [[60,25,6,1]]
 n_blocks: [[1,1,1,1]]
-mlp_units: [[[2048,2048],[2048,2048],[2048,2048],[2048,2048]]]
+mlp_units: [[[4096,4096],[4096,4096],[4096,4096],[4096,4096]]]
 
 #five-stack configs
 #stack_types: [['identity', 'identity', 'identity', 'identity', 'identity']]

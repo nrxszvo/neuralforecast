@@ -13,6 +13,7 @@ import torch.nn as nn
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import TQDMProgressBar
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 from ._scalers import TemporalNorm
 from ..tsdataset import TimeSeriesDataModule, LowMemTSDataModule
@@ -141,6 +142,7 @@ class BaseWindows(pl.LightningModule):
             raise Exception("max_epochs is deprecated, use max_steps instead.")
 
         # Callbacks
+
         if trainer_kwargs.get("callbacks", None) is None:
             callbacks = [TQDMProgressBar()]
             # Early stopping
@@ -152,6 +154,10 @@ class BaseWindows(pl.LightningModule):
                 ]
 
             trainer_kwargs["callbacks"] = callbacks
+        checkpoint_callback = ModelCheckpoint(
+            dirpath=".", filename="latest_model", save_weights_only=True
+        )
+        trainer_kwargs["callbacks"].append(checkpoint_callback)
 
         # Add GPU accelerator if available
         if trainer_kwargs.get("accelerator", None) is None:
@@ -162,8 +168,8 @@ class BaseWindows(pl.LightningModule):
                 trainer_kwargs["devices"] = -1
 
         # Avoid saturating local memory, disabled fit model checkpoints
-        if trainer_kwargs.get("enable_checkpointing", None) is None:
-            trainer_kwargs["enable_checkpointing"] = False
+        # if trainer_kwargs.get("enable_checkpointing", None) is None:
+        #    trainer_kwargs["enable_checkpointing"] = False
 
         self.trainer_kwargs = trainer_kwargs
 
@@ -185,13 +191,15 @@ class BaseWindows(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
         scheduler = {
-            "scheduler": torch.optim.lr_scheduler.StepLR(
+            "scheduler": torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer=optimizer,
-                step_size=self.lr_decay_steps,
-                gamma=self.lr_decay_gamma,
+                factor=self.lr_decay_gamma,
+                threshold=1e-2,
+                patience=1,
             ),
-            "frequency": 1,
+            "frequency": self.val_check_steps,
             "interval": "step",
+            "monitor": "valid_loss",
         }
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
